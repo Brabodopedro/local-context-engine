@@ -14,6 +14,11 @@ context_dir: .ai-context
 default_output: .ai-context
 scan:
   max_file_size_kb: 500
+task:
+  max_primary_files: 5
+  max_secondary_files: 8
+  max_context_files: 10
+  max_avoid_files: 20
 """
 
 CONTEXT_README = """# .ai-context

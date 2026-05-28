@@ -73,6 +73,10 @@ class TaskRelevantFile(BaseModel):
 class TaskContext(BaseModel):
     task: str
     slug: str
+    max_primary_files: int = 5
+    max_secondary_files: int = 8
+    max_context_files: int = 10
+    max_avoid_files: int = 20
     detected_intents: list[str] = Field(default_factory=list)
     primary_files: list[TaskRelevantFile] = Field(default_factory=list)
     secondary_files: list[TaskRelevantFile] = Field(default_factory=list)

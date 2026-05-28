@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from lce.models.context_models import FileIndex, FileInfo, TaskContext, TaskRelevantFile
+from lce.scanner.scan_config import TaskBudget
 from lce.utils.file_utils import slugify
 
 TASK_KEYWORDS = {
@@ -87,6 +88,19 @@ CONFIG_FILENAMES = {
     "package.json",
 }
 MIN_RELEVANCE_SCORE = 0.20
+BROAD_ARCHITECTURE_KEYWORDS = {
+    "worker",
+    "api",
+    "service",
+    "app",
+    "module",
+    "core",
+    "common",
+    "utils",
+    "helper",
+}
+HELPER_MODULE_STEMS = {"utils", "helpers", "ffmpeg", "client", "adapter", "config"}
+FFMPEG_PRIMARY_TERMS = {"ffmpeg", "filter", "codec", "command", "subtitle", "crop", "transcode"}
 
 
 @dataclass(frozen=True)
@@ -94,6 +108,8 @@ class RelevanceCandidate:
     file: TaskRelevantFile
     category: str
     score: float
+    actionable_score: float = 0.0
+    strong_match_count: int = 0
 
 
 def keywords_for_task(task: str) -> list[str]:
@@ -178,13 +194,16 @@ def find_relevant_files(
     return generate_task_context(file_index, task, limit=limit).relevant_files
 
 
-def generate_task_context(file_index: FileIndex, task: str, limit: int = 10) -> TaskContext:
+def generate_task_context(
+    file_index: FileIndex,
+    task: str,
+    limit: int = 10,
+    budget: TaskBudget | None = None,
+) -> TaskContext:
+    task_budget = budget or TaskBudget()
     slug = slugify(task)
     candidates = _rank_candidates(file_index, task)
-    primary = _take_category(candidates, "primary", limit)
-    secondary = _take_category(candidates, "secondary", limit)
-    context_files = _take_category(candidates, "context", limit)
-    avoid = _take_category(candidates, "avoid", limit)
+    primary, secondary, context_files, avoid = _rebalance_candidates(candidates, task_budget)
     flattened = [*primary, *secondary, *context_files]
     generated_files = [
         f".ai-context/tasks/{slug}/task-context.md",
@@ -196,6 +215,10 @@ def generate_task_context(file_index: FileIndex, task: str, limit: int = 10) -> 
     return TaskContext(
         task=task,
         slug=slug,
+        max_primary_files=task_budget.max_primary_files,
+        max_secondary_files=task_budget.max_secondary_files,
+        max_context_files=task_budget.max_context_files,
+        max_avoid_files=task_budget.max_avoid_files,
         detected_intents=detect_task_intents(task),
         primary_files=primary,
         secondary_files=secondary,
@@ -229,6 +252,16 @@ def render_task_context(context: TaskContext) -> str:
         "",
         *(_render_plain_list(context.detected_intents) if context.detected_intents else ["- None"]),
         "",
+        "## Context Budget",
+        "",
+        f"- Primary file limit: {context.max_primary_files}",
+        f"- Secondary file limit: {context.max_secondary_files}",
+        f"- Context file limit: {context.max_context_files}",
+        (
+            "- This context pack intentionally limits primary files to "
+            f"{context.max_primary_files} to reduce context usage for AI coding agents."
+        ),
+        "",
         "## Primary Files To Inspect First",
         "",
         *_render_relevant_files(context.primary_files),
@@ -250,10 +283,11 @@ def render_task_context(context: TaskContext) -> str:
         "1. Read `.ai-context/agent-context.md`.",
         "2. Inspect primary files first.",
         "3. Inspect secondary files only if needed.",
-        "4. Avoid migrations unless the task requires schema changes.",
-        "5. Avoid Dockerfile unless the task requires dependency or container changes.",
-        "6. Make the smallest change that satisfies the task.",
-        "7. Add or update tests for changed behavior.",
+        "4. Keep the first implementation pass focused on primary files.",
+        "5. Avoid migrations unless the task requires schema changes.",
+        "6. Avoid Dockerfile unless the task requires dependency or container changes.",
+        "7. Make the smallest change that satisfies the task.",
+        "8. Add or update tests for changed behavior.",
         "",
         "## Validation Checklist",
         "",
@@ -306,16 +340,18 @@ def render_agent_prompt(context: TaskContext, target: str) -> str:
         "Before changing code:\n"
         "1. Read `.ai-context/agent-context.md`.\n"
         f"2. Read `.ai-context/tasks/{context.slug}/task-context.md`.\n"
-        "3. Inspect primary files first:\n"
+        "3. Primary files are intentionally limited to reduce context.\n"
+        "4. Inspect primary files first and do not open all secondary/context files upfront:\n"
         f"{primary}\n"
-        "4. Inspect secondary files only if needed:\n"
+        "5. Inspect secondary files only if needed, when primary files are insufficient:\n"
         f"{secondary}\n\n"
         "Implementation rules:\n"
+        "- For local LLMs, keep the first implementation pass focused on primary_files.\n"
         "- Do not modify avoid files unless explicitly required:\n"
         f"{avoid}\n"
         "- Do not modify migrations unless the task requires schema changes.\n"
         "- Do not modify Dockerfile unless the task requires dependency/container changes.\n"
-        "- Explain any decision to edit files outside primary_files.\n"
+        "- Explain before editing files outside primary_files.\n"
         "- Avoid unrelated changes and broad refactors.\n"
         "- Update tests when behavior changes.\n"
         "- Provide validation steps and any commands run.\n\n"
@@ -347,6 +383,46 @@ def _rank_candidates(file_index: FileIndex, task: str) -> list[RelevanceCandidat
     return sorted(candidates, key=lambda item: (-item.score, item.file.path))
 
 
+def _rebalance_candidates(
+    candidates: list[RelevanceCandidate],
+    budget: TaskBudget,
+) -> tuple[
+    list[TaskRelevantFile],
+    list[TaskRelevantFile],
+    list[TaskRelevantFile],
+    list[TaskRelevantFile],
+]:
+    primary_candidates = [candidate for candidate in candidates if candidate.category == "primary"]
+    primary = primary_candidates[: budget.max_primary_files]
+    overflow_primary = primary_candidates[budget.max_primary_files :]
+
+    secondary_candidates = [
+        *overflow_primary,
+        *[candidate for candidate in candidates if candidate.category == "secondary"],
+    ]
+    secondary = secondary_candidates[: budget.max_secondary_files]
+    overflow_secondary = secondary_candidates[budget.max_secondary_files :]
+
+    context_candidates = [
+        *overflow_secondary,
+        *[candidate for candidate in candidates if candidate.category == "context"],
+    ]
+    context_files = context_candidates[: budget.max_context_files]
+    avoid = [
+        candidate
+        for candidate in candidates
+        if candidate.category == "avoid"
+        and candidate.file.role in {"migration", "generated", "example"}
+    ][: budget.max_avoid_files]
+
+    return (
+        [candidate.file for candidate in primary],
+        [candidate.file for candidate in secondary],
+        [candidate.file for candidate in context_files],
+        [candidate.file for candidate in avoid],
+    )
+
+
 def _score_file(file_info: FileInfo, task: str) -> RelevanceCandidate:
     path = normalize_index_path(file_info.path)
     role = classify_path_role(file_info)
@@ -354,12 +430,21 @@ def _score_file(file_info: FileInfo, task: str) -> RelevanceCandidate:
     keywords = keywords_for_task(task)
     path_obj = Path(path)
     filename = path_obj.name
+    stem = path_obj.stem.lower()
     suffix = path_obj.suffix.lower()
-    lower_path = path.lower()
     lower_filename = filename.lower()
     lower_tags = " ".join(file_info.tags).lower()
     lower_summary = file_info.summary.lower()
+    parent_parts = [part.lower() for part in path.split("/")[:-1]]
+    symbol_names = [
+        *file_info.functions,
+        *file_info.classes,
+        *file_info.exports,
+    ]
+    lower_symbols = " ".join(symbol_names).lower()
     score = 0.0
+    actionable_score = 0.0
+    strong_match_count = 0
     matched_keywords: list[str] = []
     reasons: list[str] = []
 
@@ -369,17 +454,39 @@ def _score_file(file_info: FileInfo, task: str) -> RelevanceCandidate:
     for keyword in keywords:
         lowered = keyword.lower()
         matched = False
-        if lowered in lower_path:
-            score += 0.18
+        broad_keyword = lowered in BROAD_ARCHITECTURE_KEYWORDS
+        if lowered == stem:
+            score += 0.30
+            actionable_score += 0.30
+            strong_match_count += 0 if broad_keyword else 1
             matched = True
-        if lowered in lower_filename:
-            score += 0.16
+        elif lowered in stem or lowered in lower_filename:
+            score += 0.22
+            actionable_score += 0.22
+            strong_match_count += 0 if broad_keyword else 1
+            matched = True
+        if lowered in lower_symbols:
+            score += 0.24
+            actionable_score += 0.24
+            strong_match_count += 0 if broad_keyword else 1
             matched = True
         if lowered in lower_tags:
-            score += 0.12
+            score += 0.20
+            actionable_score += 0.14
+            strong_match_count += 0 if broad_keyword else 1
             matched = True
         if lowered in lower_summary:
-            score += 0.06
+            score += 0.14
+            actionable_score += 0.10
+            strong_match_count += 0 if broad_keyword else 1
+            matched = True
+        if parent_parts and lowered in parent_parts[-1]:
+            score += 0.08
+            if not broad_keyword:
+                actionable_score += 0.03
+            matched = True
+        elif any(lowered in part for part in parent_parts):
+            score += 0.03
             matched = True
         if matched:
             matched_keywords.append(keyword)
@@ -397,12 +504,20 @@ def _score_file(file_info: FileInfo, task: str) -> RelevanceCandidate:
             reasons.append(f"Located in source directory '{source_dir}/'.")
 
     score = _apply_role_and_intent_score(score, role, suffix, filename, intents, task, reasons)
-    category = _category_for(role, score, intents, task)
+    category = _category_for(
+        role,
+        score,
+        intents,
+        task,
+        actionable_score,
+        strong_match_count,
+        stem,
+    )
     if is_generated_context_path(path):
         score = max(0.0, score - 0.80)
         category = "avoid"
         reasons.append("Penalized generated context or sample output path.")
-    return _candidate(path, role, category, score, reasons)
+    return _candidate(path, role, category, score, reasons, actionable_score, strong_match_count)
 
 
 def _apply_role_and_intent_score(
@@ -415,7 +530,7 @@ def _apply_role_and_intent_score(
     reasons: list[str],
 ) -> float:
     if role == "source":
-        score += 0.28
+        score += 0.12
         reasons.append("Located in source directory; role source.")
     elif role == "test":
         if "test" in _tokenize(task) or "tests" in _tokenize(task):
@@ -453,7 +568,7 @@ def _apply_role_and_intent_score(
         reasons.append("Example files are heavily penalized.")
 
     if suffix in SOURCE_EXTENSIONS:
-        score += 0.16
+        score += 0.08
     elif suffix in CONFIG_EXTENSIONS or filename in CONFIG_FILENAMES:
         score += 0.06 if _has_config_intent(intents, task) else 0.0
     elif suffix == ".md":
@@ -463,10 +578,25 @@ def _apply_role_and_intent_score(
         score -= 0.45
         reasons.append("Dockerfile is not primary without docker/deploy/dependency intent.")
 
+    stem = Path(filename).stem.lower()
+    task_terms = set(_tokenize(task))
+    if stem in HELPER_MODULE_STEMS and stem not in task_terms:
+        if not (stem == "ffmpeg" and task_terms & FFMPEG_PRIMARY_TERMS):
+            score -= 0.18
+            reasons.append("Helper/module filename has secondary bias unless directly requested.")
+
     return max(0.0, min(score, 0.99))
 
 
-def _category_for(role: str, score: float, intents: set[str], task: str) -> str:
+def _category_for(
+    role: str,
+    score: float,
+    intents: set[str],
+    task: str,
+    actionable_score: float,
+    strong_match_count: int,
+    stem: str,
+) -> str:
     if role == "migration" and "database" not in intents:
         return "avoid"
     if role == "generated":
@@ -481,11 +611,32 @@ def _category_for(role: str, score: float, intents: set[str], task: str) -> str:
         return "context"
     if role == "test":
         return "secondary"
-    if role == "source" and score >= 0.45:
+    if role == "source" and _should_be_primary(
+        score,
+        actionable_score,
+        strong_match_count,
+        stem,
+        task,
+    ):
         return "primary"
     if score >= 0.35:
         return "secondary"
     return "context"
+
+
+def _should_be_primary(
+    score: float,
+    actionable_score: float,
+    strong_match_count: int,
+    stem: str,
+    task: str,
+) -> bool:
+    task_terms = set(_tokenize(task))
+    if stem == "ffmpeg" and not task_terms & FFMPEG_PRIMARY_TERMS:
+        return False
+    if stem in HELPER_MODULE_STEMS and stem not in task_terms:
+        return False
+    return score >= 0.40 and actionable_score >= 0.20 and strong_match_count > 0
 
 
 def _candidate(
@@ -494,6 +645,8 @@ def _candidate(
     category: str,
     score: float,
     reasons: list[str],
+    actionable_score: float = 0.0,
+    strong_match_count: int = 0,
 ) -> RelevanceCandidate:
     return RelevanceCandidate(
         file=TaskRelevantFile(
@@ -504,6 +657,8 @@ def _candidate(
         ),
         category=category,
         score=score,
+        actionable_score=actionable_score,
+        strong_match_count=strong_match_count,
     )
 
 

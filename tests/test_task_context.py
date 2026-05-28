@@ -10,6 +10,7 @@ from lce.generators.task_context_generator import (
     render_task_context,
 )
 from lce.models.context_models import FileIndex, FileInfo
+from lce.scanner.scan_config import TaskBudget
 
 
 def make_file(path: str, tags: list[str], summary: str | None = None) -> FileInfo:
@@ -215,6 +216,19 @@ def test_source_render_upload_files_rank_as_primary() -> None:
     assert "apps/workers/Dockerfile" not in primary_paths
 
 
+def test_output_api_ranks_as_primary_for_post_render_upload_task() -> None:
+    index = FileIndex(
+        files=[
+            make_file("apps/api/outputs_api.py", ["output", "api"]),
+            make_file("apps/workers/aethel_workers/highlights.py", ["worker"]),
+        ]
+    )
+
+    context = generate_task_context(index, "add YouTube private upload after render")
+
+    assert context.primary_files[0].path == "apps/api/outputs_api.py"
+
+
 def test_task_context_contains_categorized_sections() -> None:
     context = generate_task_context(
         FileIndex(files=[make_file("apps/workers/aethel_workers/upload.py", ["upload"])]),
@@ -238,3 +252,114 @@ def test_prompt_instructs_agent_to_inspect_primary_files_first() -> None:
     assert "Inspect primary files first" in prompt
     assert "Inspect secondary files only if needed" in prompt
     assert "Do not modify migrations unless the task requires schema changes" in prompt
+
+
+def test_primary_files_are_capped_by_default_budget() -> None:
+    index = FileIndex(
+        files=[
+            make_file(f"apps/workers/aethel_workers/upload_{number}.py", ["upload", "youtube"])
+            for number in range(8)
+        ]
+    )
+
+    context = generate_task_context(index, "add YouTube private upload after render")
+
+    assert len(context.primary_files) == 5
+    assert len(context.secondary_files) == 3
+
+
+def test_broad_worker_directory_does_not_promote_unrelated_modules_to_primary() -> None:
+    index = FileIndex(
+        files=[
+            make_file("apps/workers/aethel_workers/highlights.py", ["worker"]),
+            make_file("apps/workers/aethel_workers/planning.py", ["worker"]),
+            make_file("apps/workers/aethel_workers/quality.py", ["worker"]),
+            make_file("apps/workers/aethel_workers/youtube_upload.py", ["youtube", "upload"]),
+        ]
+    )
+
+    context = generate_task_context(index, "add YouTube private upload after render")
+    primary_paths = {file.path for file in context.primary_files}
+
+    assert "apps/workers/aethel_workers/youtube_upload.py" in primary_paths
+    assert "apps/workers/aethel_workers/highlights.py" not in primary_paths
+    assert "apps/workers/aethel_workers/planning.py" not in primary_paths
+    assert "apps/workers/aethel_workers/quality.py" not in primary_paths
+
+
+def test_rendering_ranks_above_ffmpeg_for_after_render_task() -> None:
+    index = FileIndex(
+        files=[
+            make_file("apps/workers/aethel_workers/ffmpeg.py", ["ffmpeg", "render"]),
+            make_file("apps/workers/aethel_workers/rendering.py", ["render"]),
+        ]
+    )
+
+    context = generate_task_context(index, "add YouTube private upload after render")
+
+    assert context.primary_files[0].path == "apps/workers/aethel_workers/rendering.py"
+    assert context.secondary_files[0].path == "apps/workers/aethel_workers/ffmpeg.py"
+
+
+def test_ffmpeg_becomes_primary_when_task_mentions_ffmpeg_explicitly() -> None:
+    index = FileIndex(files=[make_file("apps/workers/aethel_workers/ffmpeg.py", ["ffmpeg"])])
+
+    context = generate_task_context(index, "change ffmpeg render command")
+
+    assert context.primary_files[0].path == "apps/workers/aethel_workers/ffmpeg.py"
+
+
+def test_secondary_files_receive_relevant_less_actionable_files() -> None:
+    index = FileIndex(
+        files=[
+            make_file("apps/workers/aethel_workers/youtube_upload.py", ["youtube", "upload"]),
+            make_file("apps/workers/aethel_workers/ffmpeg.py", ["ffmpeg", "render"]),
+        ]
+    )
+
+    context = generate_task_context(index, "add YouTube private upload after render")
+
+    assert context.primary_files[0].path == "apps/workers/aethel_workers/youtube_upload.py"
+    assert context.secondary_files[0].path == "apps/workers/aethel_workers/ffmpeg.py"
+
+
+def test_task_budget_can_be_overridden() -> None:
+    index = FileIndex(
+        files=[
+            make_file(f"apps/workers/aethel_workers/upload_{number}.py", ["upload", "youtube"])
+            for number in range(4)
+        ]
+    )
+
+    context = generate_task_context(
+        index,
+        "add YouTube private upload after render",
+        budget=TaskBudget(max_primary_files=2, max_secondary_files=1),
+    )
+
+    assert len(context.primary_files) == 2
+    assert len(context.secondary_files) == 1
+
+
+def test_prompt_mentions_compact_primary_context() -> None:
+    context = generate_task_context(
+        FileIndex(files=[make_file("apps/workers/aethel_workers/upload.py", ["upload"])]),
+        "add YouTube private upload after render",
+    )
+    prompt = render_agent_prompt(context, "cline")
+
+    assert "Primary files are intentionally limited to reduce context" in prompt
+    assert "For local LLMs" in prompt
+    assert "Explain before editing files outside primary_files" in prompt
+
+
+def test_task_context_includes_context_budget_section() -> None:
+    context = generate_task_context(
+        FileIndex(files=[make_file("apps/workers/aethel_workers/upload.py", ["upload"])]),
+        "add YouTube private upload after render",
+    )
+    rendered = render_task_context(context)
+
+    assert "## Context Budget" in rendered
+    assert "Primary file limit: 5" in rendered
+    assert "intentionally limits primary files to 5" in rendered

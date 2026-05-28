@@ -1,11 +1,50 @@
 {
   "task": "add JWT auth",
   "slug": "add-jwt-auth",
+  "context_budget": {
+    "max_primary_files": 5,
+    "max_secondary_files": 8,
+    "max_context_files": 10,
+    "max_avoid_files": 20
+  },
+  "detected_intents": ["auth"],
+  "primary_files": [
+    {
+      "path": "app/auth.py",
+      "role": "source",
+      "reason": "Matched task keywords 'auth, jwt'. Task intent includes auth. Located in source directory 'app/'. Located in source directory; role source.",
+      "confidence": 0.82
+    }
+  ],
+  "secondary_files": [
+    {
+      "path": "tests/test_auth.py",
+      "role": "test",
+      "reason": "Matched task keywords 'auth'. Task intent includes auth. Role test; inspect after primary files.",
+      "confidence": 0.44
+    }
+  ],
+  "context_files": [],
+  "avoid_files": [
+    {
+      "path": "app/migrations/001_add_auth_table.py",
+      "role": "migration",
+      "reason": "Matched task keywords 'auth'. Task intent includes auth. Migration penalized because task has no database intent.",
+      "confidence": 0.0
+    }
+  ],
   "files": [
     {
       "path": "app/auth.py",
-      "reason": "Matched task keywords: auth, jwt",
-      "confidence": 0.95
+      "role": "source",
+      "reason": "Matched task keywords 'auth, jwt'. Task intent includes auth. Located in source directory 'app/'. Located in source directory; role source.",
+      "confidence": 0.82
+    },
+    {
+      "path": "tests/test_auth.py",
+      "role": "test",
+      "reason": "Matched task keywords 'auth'. Task intent includes auth. Role test; inspect after primary files.",
+      "confidence": 0.44
     }
   ]
 }
