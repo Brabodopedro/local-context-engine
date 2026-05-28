@@ -1,5 +1,7 @@
 # Local Context Engine
 
+Version: 1.2.0
+
 Local Context Engine is a local context agent for AI coding workflows. It scans repositories, builds persistent local memory, and generates task-specific context packs so AI coding agents can work with less context, fewer mistakes, and better architectural awareness.
 
 ## Why This Exists
@@ -19,6 +21,7 @@ After initialization and scanning, your repository gets:
 - `.ai-context/repo-map.json`: project summary and directory map.
 - `.ai-context/metadata.json`: generation metadata.
 - `.ai-context/tasks/<task>/`: task-specific relevant files, risk map, checklist, and agent prompt.
+- `.ai-context/specs/<spec>/`: specification packs for plan-first implementation.
 
 ## Main Workflow
 
@@ -27,6 +30,7 @@ lce init
 lce scan .
 lce task "add JWT authentication"
 lce prompt --target cline
+lce spec "prepare YouTube upload integration skeleton after render"
 lce update
 ```
 
@@ -140,6 +144,39 @@ Task context generation uses deterministic relevance scoring in the MVP. It comb
 
 Project profiles can refine deterministic task relevance. The `generic` profile is the default. The `ai-video` profile adds AI/video pipeline phases and module roles for render, worker, output, shared model, storage, upload, planning, quality, highlight, transcription, and ffmpeg workflows.
 
+## Spec Engine
+
+Spec Engine converts an implementation idea into a structured technical specification before coding.
+
+```bash
+lce spec "prepare YouTube upload integration skeleton after render"
+```
+
+This creates a deterministic specification folder:
+
+```text
+.ai-context/specs/prepare-youtube-upload-integration-skeleton-after-render/
+├── spec.md
+├── requirements.md
+├── technical-plan.md
+├── affected-context.json
+├── acceptance-criteria.md
+├── risks.md
+├── validation-checklist.md
+└── agent-prompt-local-llm.md
+```
+
+Workflow:
+
+1. Generate context with LCE.
+2. Generate a spec with `lce spec`.
+3. Review the spec.
+4. Send the spec-aware local LLM prompt to Cline/Qwen.
+5. Approve the plan.
+6. Only then allow implementation.
+
+Spec generation is deterministic. It reuses `.ai-context/agent-context.md`, `.ai-context/file-index.json`, `.ai-context/repo-map.json`, project profiles, and task relevance logic where useful. It does not call OpenAI, Ollama, embeddings, vector databases, or external LLMs.
+
 ### `lce prompt --target <target>`
 
 Generates an agent prompt from the latest task folder.
@@ -152,6 +189,7 @@ Supported targets:
 - `copilot`
 - `cursor`
 - `claude`
+- `local-llm`
 
 ## Local LLM workflow
 
@@ -187,7 +225,7 @@ Checks whether `.ai-context/` exists and includes expected scan outputs. Warning
 - Python AST analyzer for imports, functions, and classes.
 - JavaScript and TypeScript regex analyzer for imports, functions, classes, and simple exports.
 - Generic analyzer for structured metadata and tags.
-- Repository map, file index, agent context, metadata, task context, risk map, validation checklist, prompts, and update summaries.
+- Repository map, file index, agent context, metadata, task context, risk map, validation checklist, prompts, spec packs, and update summaries.
 - Pytest coverage for core scanner and generator behavior.
 - Ruff configuration for linting and formatting.
 
@@ -237,17 +275,15 @@ python -m lce.main --help
 
 ## Roadmap
 
+- Skills Registry.
+- Code Intelligence Map.
+- `detailed-context.json`.
+- Function and line-range mapping.
 - `lce learn` for storing user-approved project notes.
 - `lce pr-summary` for pull request context packs.
 - Better framework detection.
 - More analyzers for PHP, Go, Java, and C#.
-- Optional embeddings.
-- Optional Ollama integration.
-- Optional OpenAI integration.
-- Web dashboard.
-- API server.
-- Watch mode.
 
 ## Non-Goals For The MVP
 
-This first implementation intentionally does not include OpenAI, Ollama, embeddings, vector databases, a web dashboard, an API server, or watch mode.
+This implementation intentionally does not include OpenAI, Ollama, embeddings, vector databases, a web dashboard, an API server, or watch mode.
