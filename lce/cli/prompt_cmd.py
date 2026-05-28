@@ -23,6 +23,10 @@ def prompt(
         Path,
         typer.Option("--output", "-o", help="Context folder."),
     ] = Path(".ai-context"),
+    compact: Annotated[
+        bool,
+        typer.Option("--compact", help="Generate a compact prompt for local LLMs."),
+    ] = False,
 ) -> None:
     """Generate a prompt for an AI coding agent from the latest task folder."""
     task_dir = latest_task_dir(output)
@@ -53,11 +57,12 @@ def prompt(
             generated_files=[],
             validation_checklist=[],
         )
-        content = generate_prompt(context, target)
+        content = generate_prompt(context, target, compact=compact)
     except ValueError as error:
         raise typer.BadParameter(str(error)) from error
 
-    prompt_path = task_dir / f"agent-prompt-{target.lower()}.md"
+    suffix = f"{target.lower()}-compact" if compact else target.lower()
+    prompt_path = task_dir / f"agent-prompt-{suffix}.md"
     write_text(prompt_path, content)
     console.print(content)
     console.print("")

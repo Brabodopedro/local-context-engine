@@ -120,3 +120,26 @@ def test_ai_video_relevant_files_json_includes_module_role(
     assert module_roles["apps/workers/aethel_workers/worker.py"] == "worker_entrypoint"
     assert module_roles["apps/api/aethel_api/outputs_api.py"] == "output_api"
     assert module_roles["packages/shared/aethel_shared/models.py"] == "shared_models"
+
+
+def test_local_llm_and_compact_prompts_are_written(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    init(profile="ai-video")
+    worker_dir = tmp_path / "apps" / "workers" / "aethel_workers"
+    worker_dir.mkdir(parents=True)
+    (worker_dir / "rendering.py").write_text("def render():\n    pass\n", encoding="utf-8")
+    scan(Path("."))
+    task("add YouTube private upload after render")
+
+    prompt(target="local-llm")
+    prompt(target="cline", compact=True)
+
+    task_dir = tmp_path / ".ai-context" / "tasks" / "add-youtube-private-upload-after-render"
+    assert (task_dir / "agent-prompt-local-llm.md").exists()
+    assert (task_dir / "agent-prompt-cline-compact.md").exists()
+    compact_prompt = (task_dir / "agent-prompt-local-llm.md").read_text(encoding="utf-8")
+    assert "First return a concise implementation plan before editing." in compact_prompt
+    assert "Do not open all files upfront." in compact_prompt

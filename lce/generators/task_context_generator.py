@@ -51,7 +51,18 @@ INTENT_KEYWORDS = {
     "upload/storage": {"upload", "storage", "s3", "minio", "file", "media"},
     "docker/deploy": {"docker", "compose", "container", "image", "deploy"},
     "database": {"database", "migration", "schema", "table", "column", "alembic", "model"},
-    "frontend": {"frontend", "page", "component", "ui", "react", "vue", "screen"},
+    "frontend": {
+        "frontend",
+        "ui",
+        "dashboard",
+        "page",
+        "screen",
+        "button",
+        "component",
+        "react",
+        "vue",
+        "mobile",
+    },
     "api": {"api", "endpoint", "route", "controller"},
 }
 
@@ -118,6 +129,8 @@ AI_VIDEO_MODULE_ROLES = {
     "storage.py": "storage_service",
     "upload.py": "upload_service",
     "youtube.py": "upload_service",
+    "loot_detection.py": "loot_detection_agent",
+    "thumbnail.py": "thumbnail_agent",
 }
 AI_VIDEO_POST_RENDER_PRIMARY = {
     "render_orchestrator": 0.97,
@@ -140,6 +153,12 @@ AI_VIDEO_BACKGROUND_CONTEXT = {
     "highlight_agent",
     "transcription_agent",
     "watcher",
+    "loot_detection_agent",
+    "thumbnail_agent",
+}
+AI_VIDEO_PHASE_SPECIFIC_TERMS = {
+    "loot_detection_agent": {"loot", "detection", "detect", "item"},
+    "thumbnail_agent": {"thumbnail", "cover", "preview", "image"},
 }
 
 
@@ -217,6 +236,8 @@ def classify_path_role(file_info: FileInfo | str) -> str:
         return "package_init"
     if parts and parts[0] in {"tests", "test"}:
         return "test"
+    if _is_frontend_path(parts):
+        return "source"
     if parts and parts[0] == "examples":
         return "example"
     if parts and parts[0] in {"docs", "documentation"}:
@@ -243,6 +264,8 @@ def classify_module_role(file_info: FileInfo | str, profile: str = DEFAULT_PROFI
         return "shared_enums"
     if filename.startswith("youtube") or filename.startswith("upload"):
         return "upload_service"
+    if _is_frontend_path(parts):
+        return "frontend_app"
     return AI_VIDEO_MODULE_ROLES.get(filename)
 
 
@@ -463,6 +486,37 @@ def render_agent_prompt(context: TaskContext, target: str) -> str:
         "- Update tests when behavior changes.\n"
         "- Provide validation steps and any commands run.\n\n"
         f"Target guidance: {target_note}"
+    )
+
+
+def render_compact_agent_prompt(context: TaskContext, target: str) -> str:
+    primary = _render_compact_primary_files(context.primary_files)
+    phases = ", ".join(context.detected_pipeline_phases) or "none detected"
+    secondary_count = len(context.secondary_files)
+    context_count = len(context.context_files)
+    avoid_summary = _compact_avoid_summary(context)
+    repo_type = (
+        "an AI/video pipeline repository"
+        if context.project_profile == AI_VIDEO_PROFILE
+        else "a source code repository"
+    )
+    return (
+        f"You are working on {repo_type} using the {context.project_profile} profile.\n\n"
+        f"Task:\n{context.task}\n\n"
+        f"Detected pipeline phases: {phases}\n\n"
+        "Primary files to inspect first:\n"
+        f"{primary}\n\n"
+        "Secondary/context:\n"
+        f"- {secondary_count} secondary files are available; open only if needed.\n"
+        f"- {context_count} context files are available; do not open them upfront.\n\n"
+        "Rules:\n"
+        "- Start with primary files only.\n"
+        "- Do not open all files upfront.\n"
+        "- Do not inspect secondary/context files unless primary files are insufficient.\n"
+        "- Do not edit migrations unless schema changes are explicitly required.\n"
+        "- Do not edit Dockerfiles unless dependency/container changes are explicitly required.\n"
+        f"- Avoid files summary: {avoid_summary}\n"
+        "- First return a concise implementation plan before editing.\n"
     )
 
 
@@ -859,6 +913,22 @@ def _apply_ai_video_profile_rules(
 
     task_terms = set(_tokenize(task))
     post_render_task = bool(phases & {"post-render", "storage/upload"})
+    frontend_intent = "frontend" in detect_task_intents(task)
+
+    if module_role == "frontend_app" and not frontend_intent:
+        reasons.append("AI-video profile keeps frontend files as context without UI intent.")
+        return "context", min(max(score, 0.20), 0.34), reasons
+    if module_role == "frontend_app" and frontend_intent:
+        reasons.append("AI-video profile promotes frontend file for explicit UI/dashboard work.")
+        return "primary", max(score, 0.88), reasons
+
+    requested_terms = AI_VIDEO_PHASE_SPECIFIC_TERMS.get(module_role)
+    if requested_terms and not (task_terms & requested_terms):
+        reasons.append("AI-video profile keeps phase-specific module as context unless requested.")
+        return "context", min(max(score, 0.24), 0.34), reasons
+    if requested_terms and task_terms & requested_terms:
+        reasons.append("AI-video profile promotes phase-specific module explicitly requested.")
+        return "primary", max(score, 0.90), reasons
 
     if module_role == "render_helper" and task_terms & FFMPEG_PRIMARY_TERMS:
         reasons.append(
@@ -910,6 +980,10 @@ def _is_under_shared_package(parts: list[str]) -> bool:
     return "packages" in parts and "shared" in parts
 
 
+def _is_frontend_path(parts: list[str]) -> bool:
+    return "dashboard" in parts or "frontend" in parts or "mobile" in parts
+
+
 def _render_relevant_files(
     files: list[TaskRelevantFile],
     fallback: list[str] | None = None,
@@ -945,6 +1019,25 @@ def _render_prompt_file_list(files: list[TaskRelevantFile]) -> str:
     if not files:
         return "- None"
     return "\n".join(f"- `{file.path}` ({_display_role(file)})" for file in files)
+
+
+def _render_compact_primary_files(files: list[TaskRelevantFile]) -> str:
+    if not files:
+        return "- None"
+    return "\n".join(
+        f"- {file.path} - {file.module_role or file.role}"
+        for file in files
+    )
+
+
+def _compact_avoid_summary(context: TaskContext) -> str:
+    if not context.avoid_files:
+        return "none listed"
+    counts: dict[str, int] = {}
+    for file in context.avoid_files:
+        key = file.role
+        counts[key] = counts.get(key, 0) + 1
+    return ", ".join(f"{count} {role}" for role, count in sorted(counts.items()))
 
 
 def _display_role(file: TaskRelevantFile) -> str:

@@ -9,9 +9,10 @@ from lce.generators.task_context_generator import (
     generate_task_context,
     keywords_for_task,
     render_agent_prompt,
+    render_compact_agent_prompt,
     render_task_context,
 )
-from lce.models.context_models import FileIndex, FileInfo
+from lce.models.context_models import FileIndex, FileInfo, TaskContext, TaskRelevantFile
 from lce.scanner.scan_config import TaskBudget
 
 
@@ -490,3 +491,96 @@ def test_ai_video_prompt_mentions_profile_guidance() -> None:
     assert "generated using the `ai-video` profile" in prompt
     assert "AI/video pipeline roles" in prompt
     assert "Do not inspect planning/quality/highlight modules" in prompt
+
+
+def test_ai_video_frontend_file_not_promoted_without_frontend_intent() -> None:
+    index = FileIndex(
+        files=[
+            make_file("apps/dashboard/src/main.tsx", ["dashboard", "react"]),
+            make_file("apps/workers/aethel_workers/rendering.py", ["render"]),
+        ]
+    )
+
+    context = generate_task_context(
+        index,
+        "add YouTube private upload after render",
+        profile="ai-video",
+    )
+
+    assert "apps/dashboard/src/main.tsx" not in [file.path for file in context.primary_files]
+    assert "apps/dashboard/src/main.tsx" not in [file.path for file in context.secondary_files]
+
+
+def test_ai_video_frontend_file_promoted_with_frontend_intent() -> None:
+    index = FileIndex(files=[make_file("apps/dashboard/src/main.tsx", ["dashboard", "react"])])
+
+    context = generate_task_context(index, "add dashboard UI button", profile="ai-video")
+
+    assert context.primary_files[0].path == "apps/dashboard/src/main.tsx"
+    assert context.primary_files[0].module_role == "frontend_app"
+
+
+def test_ai_video_loot_detection_context_unless_requested() -> None:
+    index = FileIndex(
+        files=[make_file("apps/workers/aethel_workers/loot_detection.py", ["detection"])]
+    )
+
+    unrelated = generate_task_context(
+        index,
+        "add YouTube private upload after render",
+        profile="ai-video",
+    )
+    requested = generate_task_context(index, "improve loot detection", profile="ai-video")
+
+    assert unrelated.context_files[0].module_role == "loot_detection_agent"
+    assert requested.primary_files[0].module_role == "loot_detection_agent"
+
+
+def test_ai_video_thumbnail_context_unless_requested() -> None:
+    index = FileIndex(files=[make_file("apps/workers/aethel_workers/thumbnail.py", ["thumbnail"])])
+
+    unrelated = generate_task_context(
+        index,
+        "add YouTube private upload after render",
+        profile="ai-video",
+    )
+    requested = generate_task_context(index, "generate thumbnail preview image", profile="ai-video")
+
+    assert unrelated.context_files[0].module_role == "thumbnail_agent"
+    assert requested.primary_files[0].module_role == "thumbnail_agent"
+
+
+def test_compact_prompt_includes_primary_files_and_summarizes_avoid_files() -> None:
+    context = TaskContext(
+        task="add YouTube private upload after render",
+        slug="add-youtube-private-upload-after-render",
+        project_profile="ai-video",
+        detected_pipeline_phases=["render", "post-render", "storage/upload"],
+        primary_files=[
+            TaskRelevantFile(
+                path="apps/workers/aethel_workers/rendering.py",
+                role="source",
+                module_role="render_orchestrator",
+                reason="primary",
+                confidence=0.97,
+            )
+        ],
+        avoid_files=[
+            TaskRelevantFile(
+                path=f"apps/api/migrations/{number}.py",
+                role="migration",
+                module_role=None,
+                reason="avoid",
+                confidence=0.0,
+            )
+            for number in range(5)
+        ],
+    )
+
+    prompt = render_compact_agent_prompt(context, "local-llm")
+
+    assert "apps/workers/aethel_workers/rendering.py - render_orchestrator" in prompt
+    assert "5 migration" in prompt
+    assert "apps/api/migrations/0.py" not in prompt
+    assert "First return a concise implementation plan before editing." in prompt
+    assert "Do not open all files upfront." in prompt
