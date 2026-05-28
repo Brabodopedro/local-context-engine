@@ -66,6 +66,39 @@ Scans a repository and generates:
 
 The scanner ignores common heavy or sensitive paths such as `.git`, `node_modules`, build folders, virtual environments, caches, storage folders, and `.env` files.
 
+## Safe scanning with `.lceignore`
+
+LCE ignores common heavy and sensitive files by default, including local environment files, keys, certificates, local databases, archives, videos, images, caches, build outputs, and `.ai-context/` itself. `.ai-context/` is generated output and is ignored as source input.
+
+Each repository can add a `.lceignore` file at the repository root for project-specific exclusions. The MVP supports simple gitignore-like patterns: directory patterns ending with `/`, exact file names, wildcard extensions, nested paths, comments starting with `#`, and blank lines.
+
+For video, AI, and media-heavy projects, ignore videos, generated outputs, model files, logs, and local storage. Example for AETHEL-like projects:
+
+```gitignore
+.ai-context/
+storage/
+outputs/
+videos/
+models/
+logs/
+tmp/
+*.mp4
+*.mov
+*.mkv
+*.pt
+*.onnx
+*.safetensors
+.env
+.env.*
+```
+
+By default, files larger than 500 KB are skipped. You can override this in `.ai-context/config.yml`:
+
+```yaml
+scan:
+  max_file_size_kb: 500
+```
+
 ### `lce update`
 
 Refreshes an existing `.ai-context/` folder after files are added, modified, or removed.
@@ -116,6 +149,8 @@ Checks whether `.ai-context/` exists and includes expected scan outputs. Warning
 - Pydantic data models.
 - Deterministic recursive repository scan.
 - Default ignore rules for heavy and sensitive files.
+- `.lceignore` support for repository-specific safe scanning.
+- Large file skipping with metadata counters.
 - Extension-based language detection.
 - Python AST analyzer for imports, functions, and classes.
 - JavaScript and TypeScript regex analyzer for imports, functions, classes, and simple exports.

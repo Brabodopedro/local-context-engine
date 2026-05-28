@@ -8,6 +8,10 @@ def compare_file_indexes(
     current_index: FileIndex,
     updated_at: str,
     ignored_files: int,
+    skipped_large_files: int = 0,
+    ignored_sensitive_files: int = 0,
+    ignored_binary_files: int = 0,
+    lceignore_detected: bool = False,
 ) -> UpdateSummary:
     previous_by_path = _fingerprints_by_path(previous_index)
     current_by_path = _fingerprints_by_path(current_index)
@@ -33,6 +37,10 @@ def compare_file_indexes(
         unchanged_files_count=unchanged_files_count,
         indexed_files=len(current_index.files),
         ignored_files=ignored_files,
+        skipped_large_files=skipped_large_files,
+        ignored_sensitive_files=ignored_sensitive_files,
+        ignored_binary_files=ignored_binary_files,
+        lceignore_detected=lceignore_detected,
     )
 
 
@@ -74,6 +82,10 @@ def render_last_update(summary: UpdateSummary) -> str:
             f"- Unchanged files: {summary.unchanged_files_count}",
             f"- Indexed files: {summary.indexed_files}",
             f"- Ignored files: {summary.ignored_files}",
+            f"- Skipped large files: {summary.skipped_large_files}",
+            f"- Ignored sensitive files: {summary.ignored_sensitive_files}",
+            f"- Ignored binary files: {summary.ignored_binary_files}",
+            f"- `.lceignore` detected: {'yes' if summary.lceignore_detected else 'no'}",
             "",
         ]
     )

@@ -12,6 +12,8 @@ console = Console()
 DEFAULT_CONFIG = """version: 1
 context_dir: .ai-context
 default_output: .ai-context
+scan:
+  max_file_size_kb: 500
 """
 
 CONTEXT_README = """# .ai-context

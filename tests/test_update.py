@@ -56,17 +56,22 @@ def test_update_generates_reports_and_updates_metadata(tmp_path: Path, monkeypat
     (tmp_path / "app.py").write_text("def run():\n    return True\n", encoding="utf-8")
     initialize_context(tmp_path, monkeypatch)
     (tmp_path / "new.py").write_text("def new():\n    return True\n", encoding="utf-8")
+    (tmp_path / "clip.mp4").write_bytes(b"video")
 
     update()
 
     context_dir = tmp_path / ".ai-context"
     metadata = read_json(context_dir / "metadata.json")
+    update_data = read_json(context_dir / "last-update.json")
     assert (context_dir / "last-update.md").exists()
     assert (context_dir / "last-update.json").exists()
     assert "updated_at" in metadata
     assert metadata["last_update_added_files"] == ["new.py"]
     assert metadata["last_update_modified_files"] == []
     assert metadata["last_update_removed_files"] == []
+    assert metadata["ignored_binary_files"] == 1
+    assert update_data["ignored_binary_files"] == 1
+    assert update_data["lceignore_detected"] is False
 
 
 def test_update_command_is_registered() -> None:

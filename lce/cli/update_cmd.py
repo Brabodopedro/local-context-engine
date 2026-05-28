@@ -15,6 +15,7 @@ from lce.generators.repo_map_generator import generate_repo_map
 from lce.generators.update_generator import compare_file_indexes, render_last_update
 from lce.models.context_models import UpdateSummary
 from lce.scanner.file_scanner import scan_repository
+from lce.scanner.scan_config import load_scan_config
 from lce.store.context_store import ContextStore
 
 console = Console()
@@ -38,7 +39,8 @@ def update(
 
     store = ContextStore(output)
     previous_index = store.read_file_index()
-    result = scan_repository(path)
+    scan_config = load_scan_config(output)
+    result = scan_repository(path, config=scan_config)
     current_index = generate_file_index(result.files)
     repo_map = generate_repo_map(result)
     updated_at = datetime.now(UTC).isoformat()
@@ -47,6 +49,10 @@ def update(
         current_index=current_index,
         updated_at=updated_at,
         ignored_files=result.ignored_files,
+        skipped_large_files=result.skipped_large_files,
+        ignored_sensitive_files=result.ignored_sensitive_files,
+        ignored_binary_files=result.ignored_binary_files,
+        lceignore_detected=result.lceignore_detected,
     )
     metadata = {
         "generated_at": updated_at,
@@ -56,6 +62,11 @@ def update(
         "output_path": str(output.resolve()),
         "indexed_files": len(result.files),
         "ignored_files": result.ignored_files,
+        "skipped_large_files": result.skipped_large_files,
+        "ignored_sensitive_files": result.ignored_sensitive_files,
+        "ignored_binary_files": result.ignored_binary_files,
+        "lceignore_detected": result.lceignore_detected,
+        "config_source": result.config_source,
         "last_update_added_files": summary.added_files,
         "last_update_modified_files": summary.modified_files,
         "last_update_removed_files": summary.removed_files,
@@ -80,6 +91,10 @@ def _print_update_summary(summary: UpdateSummary) -> None:
     table.add_row("Removed files", str(len(summary.removed_files)))
     table.add_row("Indexed files", str(summary.indexed_files))
     table.add_row("Ignored files", str(summary.ignored_files))
+    table.add_row("Skipped large files", str(summary.skipped_large_files))
+    table.add_row("Ignored sensitive files", str(summary.ignored_sensitive_files))
+    table.add_row("Ignored binary files", str(summary.ignored_binary_files))
+    table.add_row(".lceignore detected", "yes" if summary.lceignore_detected else "no")
     console.print(table)
 
     changed_files = summary.added_files + summary.modified_files + summary.removed_files

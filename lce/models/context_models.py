@@ -57,6 +57,10 @@ class UpdateSummary(BaseModel):
     unchanged_files_count: int
     indexed_files: int
     ignored_files: int
+    skipped_large_files: int = 0
+    ignored_sensitive_files: int = 0
+    ignored_binary_files: int = 0
+    lceignore_detected: bool = False
 
 
 class TaskRelevantFile(BaseModel):
