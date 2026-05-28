@@ -1,0 +1,15 @@
+{
+  "files": [
+    {
+      "path": "app/auth.py",
+      "language": "Python",
+      "size_lines": 84,
+      "imports": ["jwt"],
+      "functions": ["create_token", "verify_token"],
+      "classes": [],
+      "exports": [],
+      "summary": "Python file at app/auth.py with 2 functions",
+      "tags": ["app", "auth"]
+    }
+  ]
+}

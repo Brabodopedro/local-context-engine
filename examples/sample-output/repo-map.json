@@ -1,0 +1,22 @@
+{
+  "project": {
+    "name": "sample-api",
+    "root": "/path/to/sample-api",
+    "detected_stack": ["Python", "Docker"]
+  },
+  "summary": {
+    "total_files": 42,
+    "indexed_files": 18,
+    "ignored_files": 7
+  },
+  "directories": [
+    {
+      "path": "app",
+      "purpose": "Application source"
+    },
+    {
+      "path": "tests",
+      "purpose": "Test suite"
+    }
+  ]
+}

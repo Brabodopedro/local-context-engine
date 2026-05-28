@@ -1,0 +1,11 @@
+{
+  "task": "add JWT auth",
+  "slug": "add-jwt-auth",
+  "files": [
+    {
+      "path": "app/auth.py",
+      "reason": "Matched task keywords: auth, jwt",
+      "confidence": 0.95
+    }
+  ]
+}
