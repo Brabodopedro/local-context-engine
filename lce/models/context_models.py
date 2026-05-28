@@ -30,6 +30,7 @@ class FileInfo(BaseModel):
     path: str
     language: str
     size_lines: int
+    content_hash: str = ""
     imports: list[str] = Field(default_factory=list)
     functions: list[str] = Field(default_factory=list)
     classes: list[str] = Field(default_factory=list)
@@ -40,6 +41,22 @@ class FileInfo(BaseModel):
 
 class FileIndex(BaseModel):
     files: list[FileInfo] = Field(default_factory=list)
+
+
+class FileFingerprint(BaseModel):
+    path: str
+    size_lines: int
+    content_hash: str
+
+
+class UpdateSummary(BaseModel):
+    updated_at: str
+    added_files: list[str] = Field(default_factory=list)
+    modified_files: list[str] = Field(default_factory=list)
+    removed_files: list[str] = Field(default_factory=list)
+    unchanged_files_count: int
+    indexed_files: int
+    ignored_files: int
 
 
 class TaskRelevantFile(BaseModel):

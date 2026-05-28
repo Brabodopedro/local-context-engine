@@ -27,11 +27,12 @@ lce init
 lce scan .
 lce task "add JWT authentication"
 lce prompt --target cline
+lce update
 ```
 
 Then paste the generated prompt into your AI coding agent. The prompt tells the agent to read the persistent context first, inspect only relevant files initially, avoid unrelated changes, and report validation steps.
 
-Future versions will add `lce update` for incremental refreshes.
+Run `lce update` after code changes to refresh `.ai-context/` and record added, modified, removed, and unchanged indexed files.
 
 ## Install Locally
 
@@ -64,6 +65,17 @@ Scans a repository and generates:
 - `metadata.json`
 
 The scanner ignores common heavy or sensitive paths such as `.git`, `node_modules`, build folders, virtual environments, caches, storage folders, and `.env` files.
+
+### `lce update`
+
+Refreshes an existing `.ai-context/` folder after files are added, modified, or removed.
+
+The update command reuses the scanner, regenerates the base context files, compares the previous and current file indexes using SHA-256 content hashes, and writes:
+
+- `last-update.md`
+- `last-update.json`
+
+It also updates `metadata.json` with the latest added, modified, and removed files.
 
 ### `lce task "<task description>"`
 
@@ -108,7 +120,7 @@ Checks whether `.ai-context/` exists and includes expected scan outputs. Warning
 - Python AST analyzer for imports, functions, and classes.
 - JavaScript and TypeScript regex analyzer for imports, functions, classes, and simple exports.
 - Generic analyzer for structured metadata and tags.
-- Repository map, file index, agent context, metadata, task context, risk map, validation checklist, and prompts.
+- Repository map, file index, agent context, metadata, task context, risk map, validation checklist, prompts, and update summaries.
 - Pytest coverage for core scanner and generator behavior.
 - Ruff configuration for linting and formatting.
 
@@ -158,7 +170,6 @@ python -m lce.main --help
 
 ## Roadmap
 
-- `lce update` for incremental rescans.
 - `lce learn` for storing user-approved project notes.
 - `lce pr-summary` for pull request context packs.
 - Better framework detection.
