@@ -65,6 +65,7 @@ class UpdateSummary(BaseModel):
 
 class TaskRelevantFile(BaseModel):
     path: str
+    role: str = "unknown"
     reason: str
     confidence: float
 
@@ -72,6 +73,11 @@ class TaskRelevantFile(BaseModel):
 class TaskContext(BaseModel):
     task: str
     slug: str
+    detected_intents: list[str] = Field(default_factory=list)
+    primary_files: list[TaskRelevantFile] = Field(default_factory=list)
+    secondary_files: list[TaskRelevantFile] = Field(default_factory=list)
+    context_files: list[TaskRelevantFile] = Field(default_factory=list)
+    avoid_files: list[TaskRelevantFile] = Field(default_factory=list)
     relevant_files: list[TaskRelevantFile] = Field(default_factory=list)
     generated_files: list[str] = Field(default_factory=list)
     validation_checklist: list[str] = Field(default_factory=list)

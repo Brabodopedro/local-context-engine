@@ -35,10 +35,16 @@ def prompt(
 
     try:
         data = read_json(relevant_path)
+        compatibility_files = data.get("files", [])
         context = TaskContext(
             task=data["task"],
             slug=data["slug"],
-            relevant_files=data.get("files", []),
+            detected_intents=data.get("detected_intents", []),
+            primary_files=data.get("primary_files") or compatibility_files,
+            secondary_files=data.get("secondary_files", []),
+            context_files=data.get("context_files", []),
+            avoid_files=data.get("avoid_files", []),
+            relevant_files=compatibility_files,
             generated_files=[],
             validation_checklist=[],
         )

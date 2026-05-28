@@ -44,6 +44,11 @@ def task(
         {
             "task": context.task,
             "slug": context.slug,
+            "detected_intents": context.detected_intents,
+            "primary_files": [file.model_dump() for file in context.primary_files],
+            "secondary_files": [file.model_dump() for file in context.secondary_files],
+            "context_files": [file.model_dump() for file in context.context_files],
+            "avoid_files": [file.model_dump() for file in context.avoid_files],
             "files": [file.model_dump() for file in context.relevant_files],
         },
     )
@@ -52,4 +57,7 @@ def task(
     write_text(task_dir / "agent-prompt.md", render_agent_prompt(context, "generic"))
 
     console.print(f"[green]Generated task context:[/green] {task_dir}")
-    console.print(f"Relevant files: [bold]{len(context.relevant_files)}[/bold]")
+    console.print(f"Primary files: [bold]{len(context.primary_files)}[/bold]")
+    console.print(f"Secondary files: [bold]{len(context.secondary_files)}[/bold]")
+    console.print(f"Context files: [bold]{len(context.context_files)}[/bold]")
+    console.print(f"Avoid files: [bold]{len(context.avoid_files)}[/bold]")
