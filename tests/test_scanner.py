@@ -39,3 +39,15 @@ def test_scan_repository_ignores_node_modules(tmp_path: Path) -> None:
 
     assert result.files == []
     assert result.ignored_files == 1
+
+
+def test_scan_repository_ignores_ai_context(tmp_path: Path) -> None:
+    generated = tmp_path / ".ai-context"
+    generated.mkdir()
+    (generated / "agent-context.md").write_text("# Agent Context\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("def run():\n    return True\n", encoding="utf-8")
+
+    result = scan_repository(tmp_path)
+
+    assert [file.path for file in result.files] == ["app.py"]
+    assert result.ignored_files == 1

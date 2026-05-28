@@ -78,7 +78,7 @@ Creates a deterministic task context pack:
 └── agent-prompt.md
 ```
 
-Task relevance is keyword-based in the MVP. For example, auth-related tasks prioritize files containing terms like `auth`, `user`, `login`, `token`, `jwt`, `session`, `middleware`, and `security`.
+Task context generation uses deterministic relevance scoring in the MVP. It combines keyword matches with source-directory priority, file type weighting, and penalties for documentation, examples, and generated output. For example, auth-related tasks prioritize files containing terms like `auth`, `user`, `login`, `token`, `jwt`, `session`, `middleware`, and `security`. LLM-based semantic relevance will be added later.
 
 ### `lce prompt --target <target>`
 

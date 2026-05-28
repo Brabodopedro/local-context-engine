@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lce.models.context_models import FileIndex, TaskContext, TaskRelevantFile
+from lce.models.context_models import FileIndex, FileInfo, TaskContext, TaskRelevantFile
 from lce.utils.file_utils import slugify
 
 TASK_KEYWORDS = {
@@ -29,6 +29,26 @@ DEFAULT_VALIDATION_CHECKLIST = [
     "Update documentation if public behavior changed.",
 ]
 
+SOURCE_DIRS = ("lce", "src", "app", "backend", "frontend", "server", "api")
+MEDIUM_DIRS = ("tests", "test", "config")
+LOW_PRIORITY_DIRS = ("docs", "examples")
+VERY_LOW_PRIORITY_PREFIXES = ("examples/sample-output", ".ai-context")
+GENERATED_NAMES = {
+    "agent-context.md",
+    "task-context.md",
+    "agent-prompt.md",
+    "relevant-files.json",
+    "risk-map.md",
+    "validation-checklist.md",
+    "repo-map.json",
+    "file-index.json",
+    "metadata.json",
+}
+SOURCE_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".php", ".go", ".java", ".cs"}
+CONFIG_EXTENSIONS = {".json", ".yml", ".yaml", ".toml"}
+CONFIG_FILENAMES = {"pyproject.toml", "package.json", "docker-compose.yml", "docker-compose.yaml"}
+MIN_RELEVANCE_SCORE = 0.20
+
 
 def keywords_for_task(task: str) -> list[str]:
     lowered = task.lower()
@@ -41,30 +61,114 @@ def keywords_for_task(task: str) -> list[str]:
     return sorted(set(keywords), key=str.lower)
 
 
-def score_file(path: str, tags: list[str], keywords: list[str]) -> tuple[int, list[str]]:
-    haystack = f"{path} {' '.join(tags)}".lower()
-    matched = [keyword for keyword in keywords if keyword.lower() in haystack]
-    return len(matched), matched
+def normalize_index_path(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    if normalized.startswith("./"):
+        return normalized[2:]
+    return normalized
+
+
+def is_generated_context_path(path: str) -> bool:
+    normalized = normalize_index_path(path)
+    parts = normalized.split("/")
+    return (
+        normalized.startswith(VERY_LOW_PRIORITY_PREFIXES)
+        or any(part == ".ai-context" for part in parts)
+        or Path(normalized).name in GENERATED_NAMES
+    )
+
+
+def calculate_relevance_score(
+    file_info: FileInfo,
+    task_description: str,
+) -> tuple[float, list[str]]:
+    path = file_info.path
+    tags = list(file_info.tags)
+    summary = file_info.summary
+    normalized_path = normalize_index_path(path)
+    path_obj = Path(normalized_path)
+    filename = path_obj.name
+    suffix = path_obj.suffix.lower()
+    parts = normalized_path.split("/")
+    top_dir = parts[0] if parts else ""
+    keywords = keywords_for_task(task_description)
+    score = 0.0
+    reasons: list[str] = []
+    matched_keywords: set[str] = set()
+
+    if normalized_path.startswith(".ai-context") or ".ai-context" in parts:
+        return 0.0, ["Excluded generated `.ai-context/` output."]
+
+    lower_path = normalized_path.lower()
+    lower_filename = filename.lower()
+    lower_tags = " ".join(tags).lower()
+    lower_summary = summary.lower()
+
+    for keyword in keywords:
+        lowered = keyword.lower()
+        if lowered in lower_path:
+            score += 0.24
+            matched_keywords.add(keyword)
+            reasons.append(f"Matched task keyword '{keyword}' in path.")
+        if lowered in lower_filename:
+            score += 0.18
+            matched_keywords.add(keyword)
+            reasons.append(f"Matched task keyword '{keyword}' in filename.")
+        if lowered in lower_tags:
+            score += 0.14
+            matched_keywords.add(keyword)
+            reasons.append(f"Matched task keyword '{keyword}' in tags.")
+        if lowered in lower_summary:
+            score += 0.08
+            matched_keywords.add(keyword)
+            reasons.append(f"Matched task keyword '{keyword}' in summary.")
+
+    if not matched_keywords:
+        return 0.0, ["No task keyword match."]
+
+    if top_dir in SOURCE_DIRS:
+        score += 0.28
+        reasons.append(f"Located in source directory '{top_dir}/'.")
+    elif top_dir in MEDIUM_DIRS or filename in CONFIG_FILENAMES:
+        score += 0.12
+        reasons.append("Located in tests or configuration area.")
+    elif top_dir in LOW_PRIORITY_DIRS or filename.lower() == "readme.md":
+        score -= 0.16
+        reasons.append("Located in low-priority documentation or examples area.")
+
+    if suffix in SOURCE_EXTENSIONS:
+        score += 0.22
+        reasons.append(f"Source file extension '{suffix}'.")
+    elif suffix in CONFIG_EXTENSIONS or filename in CONFIG_FILENAMES:
+        score += 0.10
+        reasons.append(f"Configuration file extension '{suffix}'.")
+    elif suffix == ".md":
+        score -= 0.18
+        reasons.append("Markdown file is lower priority for implementation tasks.")
+
+    if is_generated_context_path(normalized_path):
+        score -= 0.85
+        reasons.append("Penalized generated context or sample output path.")
+
+    return max(0.0, min(score, 0.99)), reasons
 
 
 def find_relevant_files(
     file_index: FileIndex,
     task: str,
-    limit: int = 12,
+    limit: int = 10,
 ) -> list[TaskRelevantFile]:
-    keywords = keywords_for_task(task)
-    scored: list[tuple[int, str, TaskRelevantFile]] = []
+    scored: list[tuple[float, str, TaskRelevantFile]] = []
     for file in file_index.files:
-        score, matched = score_file(file.path, file.tags, keywords)
-        if score == 0:
+        score, reasons = calculate_relevance_score(file, task)
+        if score < MIN_RELEVANCE_SCORE:
             continue
-        confidence = min(0.95, 0.45 + score * 0.15)
-        reason = f"Matched task keywords: {', '.join(matched)}"
+        reason = " ".join(reasons)
         scored.append(
             (
                 score,
                 file.path,
-                TaskRelevantFile(path=file.path, reason=reason, confidence=confidence),
+                TaskRelevantFile(path=file.path, reason=reason, confidence=round(score, 2)),
             )
         )
     return [item for _, _, item in sorted(scored, key=lambda row: (-row[0], row[1]))[:limit]]
