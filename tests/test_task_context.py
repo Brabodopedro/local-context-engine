@@ -10,6 +10,7 @@ from lce.generators.task_context_generator import (
     keywords_for_task,
     render_agent_prompt,
     render_compact_agent_prompt,
+    render_compact_context,
     render_task_context,
 )
 from lce.models.context_models import FileIndex, FileInfo, TaskContext, TaskRelevantFile
@@ -579,8 +580,38 @@ def test_compact_prompt_includes_primary_files_and_summarizes_avoid_files() -> N
 
     prompt = render_compact_agent_prompt(context, "local-llm")
 
-    assert "apps/workers/aethel_workers/rendering.py - render_orchestrator" in prompt
-    assert "5 migration" in prompt
-    assert "apps/api/migrations/0.py" not in prompt
-    assert "First return a concise implementation plan before editing." in prompt
+    assert ".ai-context/tasks/add-youtube-private-upload-after-render/compact-context.md" in prompt
+    assert "Do not open source files yet." in prompt
+    assert "First return a concise plan based only on compact context." in prompt
+    assert "Wait for approval before reading/editing source files." in prompt
     assert "Do not open all files upfront." in prompt
+
+
+def test_compact_context_includes_primary_file_summaries() -> None:
+    file_info = FileInfo(
+        path="apps/workers/aethel_workers/rendering.py",
+        language="Python",
+        size_lines=120,
+        imports=["pathlib", "subprocess"],
+        functions=["render_video"],
+        classes=[],
+        summary="Python file at apps/workers/aethel_workers/rendering.py",
+        tags=["render", "worker"],
+    )
+    context = generate_task_context(
+        FileIndex(files=[file_info]),
+        "add YouTube private upload after render",
+        profile="ai-video",
+    )
+
+    compact = render_compact_context(context, FileIndex(files=[file_info]))
+
+    assert "# Compact Context" in compact
+    assert "## Project Profile" in compact
+    assert "ai-video" in compact
+    assert "## Detected Pipeline Phases" in compact
+    assert "## Suggested First Pass" in compact
+    assert "apps/workers/aethel_workers/rendering.py" in compact
+    assert "Render orchestration module" in compact
+    assert "Functions: render_video" in compact
+    assert "Likely inspection purpose" in compact

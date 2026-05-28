@@ -9,6 +9,7 @@ from rich.console import Console
 from lce.generators.task_context_generator import (
     generate_task_context,
     render_agent_prompt,
+    render_compact_context,
     render_risk_map,
     render_task_context,
     render_validation_checklist,
@@ -45,6 +46,7 @@ def task(
     )
     task_dir = output / "tasks" / context.slug
     write_text(task_dir / "task-context.md", render_task_context(context))
+    write_text(task_dir / "compact-context.md", render_compact_context(context, file_index))
     write_json(
         task_dir / "relevant-files.json",
         {

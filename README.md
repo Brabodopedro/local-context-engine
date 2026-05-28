@@ -130,6 +130,7 @@ Creates a deterministic task context pack:
 .ai-context/tasks/add-jwt-authentication/
 ├── task-context.md
 ├── relevant-files.json
+├── compact-context.md
 ├── risk-map.md
 ├── validation-checklist.md
 └── agent-prompt.md
@@ -151,6 +152,23 @@ Supported targets:
 - `copilot`
 - `cursor`
 - `claude`
+
+## Local LLM workflow
+
+Local coding models can struggle when too many source files are opened at once. `lce prompt --target local-llm` generates a plan-first compact prompt for workflows such as Cline with Qwen, DeepSeek Coder, CodeLlama, or other local models.
+
+```bash
+lce task "add YouTube private upload after render"
+lce prompt --target local-llm
+```
+
+Then paste `agent-prompt-local-llm.md` into the coding agent. The prompt tells the model to read `compact-context.md` first, avoid opening source files initially, return a concise plan, choose the first single source file it would inspect, and wait for approval before reading or editing source files.
+
+For compact prompts with another target:
+
+```bash
+lce prompt --target cline --compact
+```
 
 ### `lce doctor`
 

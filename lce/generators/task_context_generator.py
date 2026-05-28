@@ -318,6 +318,7 @@ def generate_task_context(
     generated_files = [
         f".ai-context/tasks/{slug}/task-context.md",
         f".ai-context/tasks/{slug}/relevant-files.json",
+        f".ai-context/tasks/{slug}/compact-context.md",
         f".ai-context/tasks/{slug}/risk-map.md",
         f".ai-context/tasks/{slug}/validation-checklist.md",
         f".ai-context/tasks/{slug}/agent-prompt.md",
@@ -451,6 +452,67 @@ def render_validation_checklist(context: TaskContext) -> str:
     ) + "\n"
 
 
+def render_compact_context(context: TaskContext, file_index: FileIndex) -> str:
+    files_by_path = {file.path: file for file in file_index.files}
+    lines = [
+        "# Compact Context",
+        "",
+        "## Task",
+        "",
+        context.task,
+        "",
+        "## Project Profile",
+        "",
+        context.project_profile,
+        "",
+        "## Detected Pipeline Phases",
+        "",
+        *(
+            _render_plain_list(context.detected_pipeline_phases)
+            if context.detected_pipeline_phases
+            else ["- None"]
+        ),
+        "",
+        "## Context Budget",
+        "",
+        f"- Primary file limit: {context.max_primary_files}",
+        f"- Secondary file limit: {context.max_secondary_files}",
+        f"- Context file limit: {context.max_context_files}",
+        "- Compact context is intended for planning before opening source files.",
+        "",
+        "## Primary Files Summary",
+        "",
+    ]
+    if context.primary_files:
+        for relevant_file in context.primary_files:
+            file_info = files_by_path.get(relevant_file.path)
+            lines.extend(_render_primary_file_summary(relevant_file, file_info))
+    else:
+        lines.append("- None")
+
+    lines.extend(
+        [
+            "",
+            "## Secondary Files Summary",
+            "",
+            *_render_secondary_summary(context.secondary_files),
+            "",
+            "## Files To Avoid",
+            "",
+            f"- {_compact_avoid_summary(context)}",
+            "",
+            "## Suggested First Pass",
+            "",
+            "1. Use compact context first.",
+            "2. Inspect only the most relevant primary file.",
+            "3. Expand to other primary files only if needed.",
+            "4. Do not inspect secondary/context files upfront.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def render_agent_prompt(context: TaskContext, target: str) -> str:
     primary = _render_prompt_file_list(context.primary_files)
     secondary = _render_prompt_file_list(context.secondary_files)
@@ -490,11 +552,7 @@ def render_agent_prompt(context: TaskContext, target: str) -> str:
 
 
 def render_compact_agent_prompt(context: TaskContext, target: str) -> str:
-    primary = _render_compact_primary_files(context.primary_files)
     phases = ", ".join(context.detected_pipeline_phases) or "none detected"
-    secondary_count = len(context.secondary_files)
-    context_count = len(context.context_files)
-    avoid_summary = _compact_avoid_summary(context)
     repo_type = (
         "an AI/video pipeline repository"
         if context.project_profile == AI_VIDEO_PROFILE
@@ -504,19 +562,19 @@ def render_compact_agent_prompt(context: TaskContext, target: str) -> str:
         f"You are working on {repo_type} using the {context.project_profile} profile.\n\n"
         f"Task:\n{context.task}\n\n"
         f"Detected pipeline phases: {phases}\n\n"
-        "Primary files to inspect first:\n"
-        f"{primary}\n\n"
-        "Secondary/context:\n"
-        f"- {secondary_count} secondary files are available; open only if needed.\n"
-        f"- {context_count} context files are available; do not open them upfront.\n\n"
+        "First read:\n"
+        f"- `.ai-context/tasks/{context.slug}/compact-context.md`\n\n"
         "Rules:\n"
-        "- Start with primary files only.\n"
+        "- Do not open source files yet.\n"
+        "- First return a concise plan based only on compact context.\n"
+        "- Select the first single source file you would inspect and explain why.\n"
+        "- Wait for approval before reading/editing source files.\n"
+        "- If source files are opened later, start with primary_files only.\n"
+        "- Do not open all primary files upfront.\n"
         "- Do not open all files upfront.\n"
         "- Do not inspect secondary/context files unless primary files are insufficient.\n"
         "- Do not edit migrations unless schema changes are explicitly required.\n"
         "- Do not edit Dockerfiles unless dependency/container changes are explicitly required.\n"
-        f"- Avoid files summary: {avoid_summary}\n"
-        "- First return a concise implementation plan before editing.\n"
     )
 
 
@@ -1009,6 +1067,105 @@ def _render_module_roles(context: TaskContext) -> list[str]:
         if file.module_role
     ]
     return role_lines or ["- None"]
+
+
+def _render_primary_file_summary(
+    relevant_file: TaskRelevantFile,
+    file_info: FileInfo | None,
+) -> list[str]:
+    role_label = _display_role(relevant_file)
+    language = file_info.language if file_info else "unknown"
+    size_lines = file_info.size_lines if file_info else 0
+    imports_count = len(file_info.imports) if file_info else 0
+    functions = ", ".join(file_info.functions[:8]) if file_info and file_info.functions else "None"
+    classes = ", ".join(file_info.classes[:8]) if file_info and file_info.classes else "None"
+    summary = _deterministic_file_summary(relevant_file, file_info)
+    purpose = _inspection_purpose(relevant_file)
+    return [
+        f"### `{relevant_file.path}`",
+        "",
+        f"- Role: {role_label}",
+        f"- Language: {language}",
+        f"- Lines: {size_lines}",
+        f"- Imports: {imports_count}",
+        f"- Functions: {functions}",
+        f"- Classes: {classes}",
+        f"- Summary: {summary}",
+        f"- Why selected: {relevant_file.reason}",
+        f"- Likely inspection purpose: {purpose}",
+        "",
+    ]
+
+
+def _render_secondary_summary(files: list[TaskRelevantFile]) -> list[str]:
+    if not files:
+        return ["- None"]
+    return [
+        f"- `{file.path}` ({_display_role(file)}, {file.confidence:.2f}): inspect only if needed."
+        for file in files
+    ]
+
+
+def _deterministic_file_summary(
+    relevant_file: TaskRelevantFile,
+    file_info: FileInfo | None,
+) -> str:
+    module_role = relevant_file.module_role
+    if module_role == "render_orchestrator":
+        return (
+            "Render orchestration module. Likely controls render execution and output "
+            "persistence. Selected because the task targets post-render behavior."
+        )
+    if module_role == "worker_entrypoint":
+        return (
+            "Worker entrypoint module. Likely coordinates worker lifecycle and job "
+            "execution. Selected because post-render upload may need to run within "
+            "worker execution flow."
+        )
+    if module_role == "output_api":
+        return (
+            "Output API module. Likely exposes rendered artifact or output status flows. "
+            "Selected because upload after render may need output metadata."
+        )
+    if module_role == "video_api":
+        return (
+            "Video API module. Likely exposes video records and status endpoints. "
+            "Selected as part of post-render artifact workflow."
+        )
+    if module_role == "shared_models":
+        return (
+            "Shared models module. Likely defines cross-service data contracts. "
+            "Selected because upload status or output metadata may use shared models."
+        )
+    if module_role == "upload_service":
+        return (
+            "Upload service module. Likely handles outbound publication or storage upload. "
+            "Selected because the task explicitly involves upload."
+        )
+    if file_info:
+        tags = ", ".join(file_info.tags[:5]) if file_info.tags else "no tags"
+        return (
+            f"{file_info.summary} Role is {relevant_file.role}. Tags: {tags}."
+        )
+    filename = Path(relevant_file.path).name
+    return f"{filename} selected by deterministic task relevance."
+
+
+def _inspection_purpose(relevant_file: TaskRelevantFile) -> str:
+    module_role = relevant_file.module_role
+    if module_role == "render_orchestrator":
+        return "Find the post-render completion point and output persistence path."
+    if module_role == "worker_entrypoint":
+        return "Find where worker jobs are orchestrated and where post-render hooks belong."
+    if module_role == "output_api":
+        return "Check how rendered outputs and status are represented to callers."
+    if module_role == "video_api":
+        return "Check video/output API flow affected by upload status."
+    if module_role == "shared_models":
+        return "Check shared data contracts for output or upload status fields."
+    if module_role == "upload_service":
+        return "Check existing upload/publication integration points."
+    return "Confirm whether this file contains the smallest relevant implementation point."
 
 
 def _render_plain_list(items: list[str]) -> list[str]:

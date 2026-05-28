@@ -27,12 +27,10 @@ def test_task_writes_categorized_relevant_files_json(tmp_path: Path, monkeypatch
 
     task("add YouTube private upload after render")
 
+    task_dir = tmp_path / ".ai-context" / "tasks" / "add-youtube-private-upload-after-render"
+    assert (task_dir / "compact-context.md").exists()
     data = read_json(
-        tmp_path
-        / ".ai-context"
-        / "tasks"
-        / "add-youtube-private-upload-after-render"
-        / "relevant-files.json"
+        task_dir / "relevant-files.json"
     )
     expected_keys = {"primary_files", "secondary_files", "context_files", "avoid_files", "files"}
     assert expected_keys <= set(data)
@@ -140,6 +138,10 @@ def test_local_llm_and_compact_prompts_are_written(
     task_dir = tmp_path / ".ai-context" / "tasks" / "add-youtube-private-upload-after-render"
     assert (task_dir / "agent-prompt-local-llm.md").exists()
     assert (task_dir / "agent-prompt-cline-compact.md").exists()
+    assert (task_dir / "compact-context.md").exists()
     compact_prompt = (task_dir / "agent-prompt-local-llm.md").read_text(encoding="utf-8")
-    assert "First return a concise implementation plan before editing." in compact_prompt
+    assert "compact-context.md" in compact_prompt
+    assert "Do not open source files yet." in compact_prompt
+    assert "First return a concise plan based only on compact context." in compact_prompt
+    assert "Wait for approval before reading/editing source files." in compact_prompt
     assert "Do not open all files upfront." in compact_prompt
