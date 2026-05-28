@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from lce.generators.task_context_generator import (
     calculate_relevance_score,
+    classify_module_role,
     classify_path_role,
+    detect_pipeline_phases,
     detect_task_intents,
     generate_task_context,
     keywords_for_task,
@@ -363,3 +365,128 @@ def test_task_context_includes_context_budget_section() -> None:
     assert "## Context Budget" in rendered
     assert "Primary file limit: 5" in rendered
     assert "intentionally limits primary files to 5" in rendered
+
+
+def test_ai_video_classifies_known_module_roles() -> None:
+    assert classify_module_role("apps/workers/aethel_workers/rendering.py", "ai-video") == (
+        "render_orchestrator"
+    )
+    assert classify_module_role("apps/workers/aethel_workers/worker.py", "ai-video") == (
+        "worker_entrypoint"
+    )
+    assert classify_module_role("apps/workers/aethel_workers/ffmpeg.py", "ai-video") == (
+        "render_helper"
+    )
+    assert classify_module_role("apps/workers/aethel_workers/planning.py", "ai-video") == (
+        "planning_agent"
+    )
+
+
+def test_ai_video_detects_post_render_upload_phases() -> None:
+    phases = detect_pipeline_phases("add YouTube private upload after render", "ai-video")
+
+    assert {"render", "post-render", "storage/upload"} <= set(phases)
+
+
+def test_ai_video_post_render_upload_expected_ranking() -> None:
+    index = FileIndex(
+        files=[
+            make_file("apps/workers/aethel_workers/rendering.py", ["render"]),
+            make_file("apps/workers/aethel_workers/worker.py", ["worker"]),
+            make_file("apps/api/aethel_api/outputs_api.py", ["output", "api"]),
+            make_file("packages/shared/aethel_shared/models.py", ["model"]),
+            make_file("apps/api/aethel_api/videos_api.py", ["video", "api"]),
+            make_file("apps/workers/aethel_workers/ffmpeg.py", ["ffmpeg", "render"]),
+            make_file("apps/workers/aethel_workers/jobs.py", ["job"]),
+            make_file("packages/shared/aethel_shared/enums.py", ["enum"]),
+            make_file("apps/workers/aethel_workers/metadata.py", ["metadata"]),
+            make_file("apps/workers/aethel_workers/planning.py", ["planning"]),
+            make_file("apps/workers/aethel_workers/quality.py", ["quality"]),
+            make_file("apps/workers/aethel_workers/highlights.py", ["highlight"]),
+            make_file("apps/workers/aethel_workers/transcription.py", ["transcription"]),
+            make_file("apps/workers/aethel_workers/watcher.py", ["watcher"]),
+            make_file("apps/api/aethel_api/migrations/001_upload.py", ["upload"]),
+        ]
+    )
+
+    context = generate_task_context(
+        index,
+        "add YouTube private upload after render",
+        profile="ai-video",
+    )
+
+    assert [file.path for file in context.primary_files] == [
+        "apps/workers/aethel_workers/rendering.py",
+        "apps/workers/aethel_workers/worker.py",
+        "apps/api/aethel_api/outputs_api.py",
+        "packages/shared/aethel_shared/models.py",
+        "apps/api/aethel_api/videos_api.py",
+    ]
+    assert [file.path for file in context.secondary_files[:4]] == [
+        "apps/workers/aethel_workers/ffmpeg.py",
+        "apps/workers/aethel_workers/jobs.py",
+        "packages/shared/aethel_shared/enums.py",
+        "apps/workers/aethel_workers/metadata.py",
+    ]
+    assert {
+        "apps/workers/aethel_workers/planning.py",
+        "apps/workers/aethel_workers/quality.py",
+        "apps/workers/aethel_workers/highlights.py",
+    } <= {file.path for file in context.context_files}
+    assert context.avoid_files[0].role == "migration"
+
+
+def test_ai_video_ffmpeg_task_promotes_render_helper() -> None:
+    index = FileIndex(
+        files=[
+            make_file("apps/workers/aethel_workers/rendering.py", ["render"]),
+            make_file("apps/workers/aethel_workers/ffmpeg.py", ["ffmpeg"]),
+        ]
+    )
+
+    context = generate_task_context(index, "change ffmpeg render command", profile="ai-video")
+
+    assert context.primary_files[0].path == "apps/workers/aethel_workers/ffmpeg.py"
+    assert context.primary_files[0].module_role == "render_helper"
+
+
+def test_ai_video_planning_task_promotes_planning_agent() -> None:
+    index = FileIndex(
+        files=[
+            make_file("apps/workers/aethel_workers/rendering.py", ["render"]),
+            make_file("apps/workers/aethel_workers/planning.py", ["planning"]),
+        ]
+    )
+
+    context = generate_task_context(index, "update planning edl flow", profile="ai-video")
+
+    assert context.primary_files[0].path == "apps/workers/aethel_workers/planning.py"
+    assert context.primary_files[0].module_role == "planning_agent"
+
+
+def test_ai_video_task_context_includes_profile_phase_and_module_sections() -> None:
+    context = generate_task_context(
+        FileIndex(files=[make_file("apps/workers/aethel_workers/rendering.py", ["render"])]),
+        "add YouTube private upload after render",
+        profile="ai-video",
+    )
+    rendered = render_task_context(context)
+
+    assert "## Project Profile" in rendered
+    assert "ai-video" in rendered
+    assert "## Detected Pipeline Phases" in rendered
+    assert "## Module Roles" in rendered
+    assert "rendering.py: render_orchestrator" in rendered
+
+
+def test_ai_video_prompt_mentions_profile_guidance() -> None:
+    context = generate_task_context(
+        FileIndex(files=[make_file("apps/workers/aethel_workers/rendering.py", ["render"])]),
+        "add YouTube private upload after render",
+        profile="ai-video",
+    )
+    prompt = render_agent_prompt(context, "cline")
+
+    assert "generated using the `ai-video` profile" in prompt
+    assert "AI/video pipeline roles" in prompt
+    assert "Do not inspect planning/quality/highlight modules" in prompt

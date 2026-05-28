@@ -15,7 +15,7 @@ from lce.generators.repo_map_generator import generate_repo_map
 from lce.generators.update_generator import compare_file_indexes, render_last_update
 from lce.models.context_models import UpdateSummary
 from lce.scanner.file_scanner import scan_repository
-from lce.scanner.scan_config import load_scan_config
+from lce.scanner.scan_config import load_project_profile, load_scan_config
 from lce.store.context_store import ContextStore
 
 console = Console()
@@ -40,6 +40,7 @@ def update(
     store = ContextStore(output)
     previous_index = store.read_file_index()
     scan_config = load_scan_config(output)
+    project_profile = load_project_profile(output)
     result = scan_repository(path, config=scan_config)
     current_index = generate_file_index(result.files)
     repo_map = generate_repo_map(result)
@@ -58,6 +59,7 @@ def update(
         "generated_at": updated_at,
         "updated_at": updated_at,
         "lce_version": __version__,
+        "profile": project_profile,
         "root_path": str(result.root),
         "output_path": str(output.resolve()),
         "indexed_files": len(result.files),

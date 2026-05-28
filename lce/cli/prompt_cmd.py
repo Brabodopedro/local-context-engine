@@ -42,7 +42,9 @@ def prompt(
         context = TaskContext(
             task=data["task"],
             slug=data["slug"],
+            project_profile=data.get("project_profile", "generic"),
             detected_intents=data.get("detected_intents", []),
+            detected_pipeline_phases=data.get("detected_pipeline_phases", []),
             primary_files=primary_files,
             secondary_files=data.get("secondary_files", []),
             context_files=data.get("context_files", []),

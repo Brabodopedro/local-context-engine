@@ -13,7 +13,7 @@ from lce.generators.task_context_generator import (
     render_task_context,
     render_validation_checklist,
 )
-from lce.scanner.scan_config import load_task_budget
+from lce.scanner.scan_config import load_project_profile, load_task_budget
 from lce.store.context_store import ContextStore
 from lce.utils.file_utils import write_json, write_text
 
@@ -37,7 +37,12 @@ def task(
         raise typer.BadParameter("Run `lce scan .` before generating a task context.")
 
     file_index = store.read_file_index()
-    context = generate_task_context(file_index, task_description, budget=load_task_budget(output))
+    context = generate_task_context(
+        file_index,
+        task_description,
+        budget=load_task_budget(output),
+        profile=load_project_profile(output),
+    )
     task_dir = output / "tasks" / context.slug
     write_text(task_dir / "task-context.md", render_task_context(context))
     write_json(
@@ -45,6 +50,7 @@ def task(
         {
             "task": context.task,
             "slug": context.slug,
+            "project_profile": context.project_profile,
             "context_budget": {
                 "max_primary_files": context.max_primary_files,
                 "max_secondary_files": context.max_secondary_files,
@@ -52,6 +58,7 @@ def task(
                 "max_avoid_files": context.max_avoid_files,
             },
             "detected_intents": context.detected_intents,
+            "detected_pipeline_phases": context.detected_pipeline_phases,
             "primary_files": [file.model_dump() for file in context.primary_files],
             "secondary_files": [file.model_dump() for file in context.secondary_files],
             "context_files": [file.model_dump() for file in context.context_files],

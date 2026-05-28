@@ -46,6 +46,18 @@ pip install -e ".[dev]"
 
 ### `lce init`
 
+You can initialize with the default generic profile:
+
+```bash
+lce init --profile generic
+```
+
+For AI/video/rendering repositories, use:
+
+```bash
+lce init --profile ai-video
+```
+
 Creates:
 
 ```text
@@ -124,6 +136,8 @@ Creates a deterministic task context pack:
 ```
 
 Task context generation uses deterministic relevance scoring in the MVP. It combines keyword matches with source-directory priority, file type weighting, and penalties for documentation, examples, and generated output. For example, auth-related tasks prioritize files containing terms like `auth`, `user`, `login`, `token`, `jwt`, `session`, `middleware`, and `security`. LLM-based semantic relevance will be added later.
+
+Project profiles can refine deterministic task relevance. The `generic` profile is the default. The `ai-video` profile adds AI/video pipeline phases and module roles for render, worker, output, shared model, storage, upload, planning, quality, highlight, transcription, and ffmpeg workflows.
 
 ### `lce prompt --target <target>`
 

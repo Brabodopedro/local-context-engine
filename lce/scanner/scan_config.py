@@ -8,6 +8,8 @@ DEFAULT_MAX_PRIMARY_FILES = 5
 DEFAULT_MAX_SECONDARY_FILES = 8
 DEFAULT_MAX_CONTEXT_FILES = 10
 DEFAULT_MAX_AVOID_FILES = 20
+SUPPORTED_PROFILES = {"generic", "ai-video"}
+DEFAULT_PROFILE = "generic"
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,19 @@ def load_task_budget(output_path: Path | None = None) -> TaskBudget:
     )
 
 
+def load_project_profile(output_path: Path | None = None) -> str:
+    if output_path is None:
+        return DEFAULT_PROFILE
+    config_path = output_path / "config.yml"
+    if not config_path.exists():
+        return DEFAULT_PROFILE
+
+    profile = _read_top_level_string(config_path, "profile")
+    if profile not in SUPPORTED_PROFILES:
+        return DEFAULT_PROFILE
+    return profile
+
+
 def _read_nested_int(path: Path, section: str, key: str) -> int | None:
     current_section: str | None = None
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -76,4 +91,17 @@ def _read_nested_int(path: Path, section: str, key: str) -> int | None:
             except ValueError:
                 return None
             return parsed if parsed > 0 else None
+    return None
+
+
+def _read_top_level_string(path: Path, key: str) -> str | None:
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if line.startswith((" ", "\t")):
+            continue
+        if stripped.startswith(f"{key}:"):
+            _, value = stripped.split(":", 1)
+            return value.strip() or None
     return None

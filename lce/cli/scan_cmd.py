@@ -13,7 +13,7 @@ from lce.generators.agent_context_generator import generate_agent_context
 from lce.generators.file_index_generator import generate_file_index
 from lce.generators.repo_map_generator import generate_repo_map
 from lce.scanner.file_scanner import scan_repository
-from lce.scanner.scan_config import load_scan_config
+from lce.scanner.scan_config import load_project_profile, load_scan_config
 from lce.store.context_store import ContextStore
 
 console = Console()
@@ -31,6 +31,7 @@ def scan(
         raise typer.BadParameter(f"Path does not exist: {path}")
 
     scan_config = load_scan_config(output)
+    project_profile = load_project_profile(output)
     result = scan_repository(path, config=scan_config)
     file_index = generate_file_index(result.files)
     repo_map = generate_repo_map(result)
@@ -40,6 +41,7 @@ def scan(
         "generated_at": generated_at,
         "updated_at": generated_at,
         "lce_version": __version__,
+        "profile": project_profile,
         "root_path": str(result.root),
         "output_path": str(output.resolve()),
         "indexed_files": len(result.files),

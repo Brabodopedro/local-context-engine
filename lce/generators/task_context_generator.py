@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from lce.models.context_models import FileIndex, FileInfo, TaskContext, TaskRelevantFile
-from lce.scanner.scan_config import TaskBudget
+from lce.scanner.scan_config import DEFAULT_PROFILE, SUPPORTED_PROFILES, TaskBudget
 from lce.utils.file_utils import slugify
 
 TASK_KEYWORDS = {
@@ -101,6 +101,46 @@ BROAD_ARCHITECTURE_KEYWORDS = {
 }
 HELPER_MODULE_STEMS = {"utils", "helpers", "ffmpeg", "client", "adapter", "config"}
 FFMPEG_PRIMARY_TERMS = {"ffmpeg", "filter", "codec", "command", "subtitle", "crop", "transcode"}
+AI_VIDEO_PROFILE = "ai-video"
+AI_VIDEO_MODULE_ROLES = {
+    "rendering.py": "render_orchestrator",
+    "worker.py": "worker_entrypoint",
+    "ffmpeg.py": "render_helper",
+    "outputs_api.py": "output_api",
+    "videos_api.py": "video_api",
+    "jobs.py": "job_helpers",
+    "planning.py": "planning_agent",
+    "quality.py": "quality_agent",
+    "metadata.py": "metadata_agent",
+    "highlights.py": "highlight_agent",
+    "transcription.py": "transcription_agent",
+    "watcher.py": "watcher",
+    "storage.py": "storage_service",
+    "upload.py": "upload_service",
+    "youtube.py": "upload_service",
+}
+AI_VIDEO_POST_RENDER_PRIMARY = {
+    "render_orchestrator": 0.97,
+    "worker_entrypoint": 0.94,
+    "output_api": 0.93,
+    "upload_service": 0.92,
+    "storage_service": 0.90,
+    "shared_models": 0.88,
+    "video_api": 0.86,
+}
+AI_VIDEO_POST_RENDER_SECONDARY = {
+    "render_helper": 0.76,
+    "job_helpers": 0.72,
+    "shared_enums": 0.70,
+    "metadata_agent": 0.68,
+}
+AI_VIDEO_BACKGROUND_CONTEXT = {
+    "planning_agent",
+    "quality_agent",
+    "highlight_agent",
+    "transcription_agent",
+    "watcher",
+}
 
 
 @dataclass(frozen=True)
@@ -133,6 +173,35 @@ def detect_task_intents(task: str) -> list[str]:
     return sorted(intents)
 
 
+def detect_pipeline_phases(task: str, profile: str = DEFAULT_PROFILE) -> list[str]:
+    if _normalize_profile(profile) != AI_VIDEO_PROFILE:
+        return []
+    task_terms = set(_tokenize(task))
+    lowered = task.lower()
+    phases: set[str] = set()
+
+    if task_terms & {"analysis", "transcription", "whisper", "detect", "vision"}:
+        phases.add("analysis")
+    if task_terms & {"planning", "planner", "edl", "plan"}:
+        phases.add("planning")
+    if task_terms & {"render", "rendering", "ffmpeg", "output"} or "final.mp4" in lowered:
+        phases.add("render")
+    if (
+        "after render" in lowered
+        or task_terms & {"upload", "publish", "youtube", "metadata"}
+        or "output status" in lowered
+    ):
+        phases.add("post-render")
+    if task_terms & {"quality", "validation", "check"}:
+        phases.add("quality")
+    if task_terms & {"storage", "s3", "minio", "artifact", "upload", "youtube"}:
+        phases.add("storage/upload")
+    if task_terms & {"highlight", "highlights"}:
+        phases.add("highlight")
+
+    return sorted(phases)
+
+
 def classify_path_role(file_info: FileInfo | str) -> str:
     path = normalize_index_path(file_info.path if isinstance(file_info, FileInfo) else file_info)
     path_obj = Path(path)
@@ -161,6 +230,22 @@ def classify_path_role(file_info: FileInfo | str) -> str:
     return "unknown"
 
 
+def classify_module_role(file_info: FileInfo | str, profile: str = DEFAULT_PROFILE) -> str | None:
+    if _normalize_profile(profile) != AI_VIDEO_PROFILE:
+        return None
+    path = normalize_index_path(file_info.path if isinstance(file_info, FileInfo) else file_info)
+    parts = path.split("/")
+    filename = Path(path).name
+
+    if filename == "models.py" and _is_under_shared_package(parts):
+        return "shared_models"
+    if filename == "enums.py" and _is_under_shared_package(parts):
+        return "shared_enums"
+    if filename.startswith("youtube") or filename.startswith("upload"):
+        return "upload_service"
+    return AI_VIDEO_MODULE_ROLES.get(filename)
+
+
 def normalize_index_path(path: str) -> str:
     normalized = path.replace("\\", "/")
     if normalized.startswith("./"):
@@ -182,7 +267,7 @@ def calculate_relevance_score(
     file_info: FileInfo,
     task_description: str,
 ) -> tuple[float, list[str]]:
-    candidate = _score_file(file_info, task_description)
+    candidate = _score_file(file_info, task_description, DEFAULT_PROFILE)
     return candidate.score, [candidate.file.reason]
 
 
@@ -199,10 +284,12 @@ def generate_task_context(
     task: str,
     limit: int = 10,
     budget: TaskBudget | None = None,
+    profile: str = DEFAULT_PROFILE,
 ) -> TaskContext:
     task_budget = budget or TaskBudget()
+    project_profile = _normalize_profile(profile)
     slug = slugify(task)
-    candidates = _rank_candidates(file_index, task)
+    candidates = _rank_candidates(file_index, task, project_profile)
     primary, secondary, context_files, avoid = _rebalance_candidates(candidates, task_budget)
     flattened = [*primary, *secondary, *context_files]
     generated_files = [
@@ -215,11 +302,13 @@ def generate_task_context(
     return TaskContext(
         task=task,
         slug=slug,
+        project_profile=project_profile,
         max_primary_files=task_budget.max_primary_files,
         max_secondary_files=task_budget.max_secondary_files,
         max_context_files=task_budget.max_context_files,
         max_avoid_files=task_budget.max_avoid_files,
         detected_intents=detect_task_intents(task),
+        detected_pipeline_phases=detect_pipeline_phases(task, project_profile),
         primary_files=primary,
         secondary_files=secondary,
         context_files=context_files,
@@ -248,9 +337,25 @@ def render_task_context(context: TaskContext) -> str:
         "",
         context.task,
         "",
+        "## Project Profile",
+        "",
+        context.project_profile,
+        "",
         "## Detected Intents",
         "",
         *(_render_plain_list(context.detected_intents) if context.detected_intents else ["- None"]),
+        "",
+        "## Detected Pipeline Phases",
+        "",
+        *(
+            _render_plain_list(context.detected_pipeline_phases)
+            if context.detected_pipeline_phases
+            else ["- None"]
+        ),
+        "",
+        "## Module Roles",
+        "",
+        *_render_module_roles(context),
         "",
         "## Context Budget",
         "",
@@ -337,6 +442,8 @@ def render_agent_prompt(context: TaskContext, target: str) -> str:
     }.get(target, "Use your coding-agent tools with a narrow initial context.")
     return (
         f"You are working on this task: {context.task}\n\n"
+        f"This context pack was generated using the `{context.project_profile}` profile.\n"
+        f"{_profile_prompt_note(context)}\n\n"
         "Before changing code:\n"
         "1. Read `.ai-context/agent-context.md`.\n"
         f"2. Read `.ai-context/tasks/{context.slug}/task-context.md`.\n"
@@ -369,10 +476,14 @@ def latest_task_dir(output_path: Path) -> Path | None:
     return max(task_dirs, key=lambda path: path.stat().st_mtime)
 
 
-def _rank_candidates(file_index: FileIndex, task: str) -> list[RelevanceCandidate]:
+def _rank_candidates(
+    file_index: FileIndex,
+    task: str,
+    profile: str,
+) -> list[RelevanceCandidate]:
     candidates: list[RelevanceCandidate] = []
     for file in file_index.files:
-        candidate = _score_file(file, task)
+        candidate = _score_file(file, task, profile)
         has_keyword_match = "Matched task keywords" in candidate.file.reason
         if (
             candidate.category == "avoid"
@@ -423,10 +534,12 @@ def _rebalance_candidates(
     )
 
 
-def _score_file(file_info: FileInfo, task: str) -> RelevanceCandidate:
+def _score_file(file_info: FileInfo, task: str, profile: str) -> RelevanceCandidate:
     path = normalize_index_path(file_info.path)
     role = classify_path_role(file_info)
+    module_role = classify_module_role(file_info, profile)
     intents = set(detect_task_intents(task))
+    phases = set(detect_pipeline_phases(task, profile))
     keywords = keywords_for_task(task)
     path_obj = Path(path)
     filename = path_obj.name
@@ -449,7 +562,14 @@ def _score_file(file_info: FileInfo, task: str) -> RelevanceCandidate:
     reasons: list[str] = []
 
     if role == "generated":
-        return _candidate(path, role, "avoid", 0.0, ["Generated context or sample output."])
+        return _candidate(
+            path,
+            role,
+            module_role,
+            "avoid",
+            0.0,
+            ["Generated context or sample output."],
+        )
 
     for keyword in keywords:
         lowered = keyword.lower()
@@ -493,7 +613,25 @@ def _score_file(file_info: FileInfo, task: str) -> RelevanceCandidate:
 
     if not matched_keywords:
         category = "avoid" if role in {"migration", "generated"} else "context"
-        return _candidate(path, role, category, 0.0, ["No actionable task keyword match."])
+        if profile == AI_VIDEO_PROFILE and module_role:
+            category, score, reasons = _apply_ai_video_profile_rules(
+                role=role,
+                module_role=module_role,
+                phases=phases,
+                task=task,
+                score=0.0,
+                category=category,
+                reasons=["No actionable task keyword match."],
+            )
+            return _candidate(path, role, module_role, category, score, reasons)
+        return _candidate(
+            path,
+            role,
+            module_role,
+            category,
+            0.0,
+            ["No actionable task keyword match."],
+        )
 
     reasons.append(f"Matched task keywords '{', '.join(sorted(set(matched_keywords)))}'.")
     if intents:
@@ -517,7 +655,26 @@ def _score_file(file_info: FileInfo, task: str) -> RelevanceCandidate:
         score = max(0.0, score - 0.80)
         category = "avoid"
         reasons.append("Penalized generated context or sample output path.")
-    return _candidate(path, role, category, score, reasons, actionable_score, strong_match_count)
+    if profile == AI_VIDEO_PROFILE and module_role:
+        category, score, reasons = _apply_ai_video_profile_rules(
+            role=role,
+            module_role=module_role,
+            phases=phases,
+            task=task,
+            score=score,
+            category=category,
+            reasons=reasons,
+        )
+    return _candidate(
+        path,
+        role,
+        module_role,
+        category,
+        score,
+        reasons,
+        actionable_score,
+        strong_match_count,
+    )
 
 
 def _apply_role_and_intent_score(
@@ -642,6 +799,7 @@ def _should_be_primary(
 def _candidate(
     path: str,
     role: str,
+    module_role: str | None,
     category: str,
     score: float,
     reasons: list[str],
@@ -652,6 +810,7 @@ def _candidate(
         file=TaskRelevantFile(
             path=path,
             role=role,
+            module_role=module_role,
             reason=" ".join(reasons),
             confidence=round(score, 2),
         ),
@@ -686,6 +845,71 @@ def _mentions_package_surface(task: str) -> bool:
     return bool(set(_tokenize(task)) & {"export", "exports", "package", "import", "imports"})
 
 
+def _apply_ai_video_profile_rules(
+    role: str,
+    module_role: str,
+    phases: set[str],
+    task: str,
+    score: float,
+    category: str,
+    reasons: list[str],
+) -> tuple[str, float, list[str]]:
+    if role in {"migration", "generated", "example", "package_init"}:
+        return category, score, reasons
+
+    task_terms = set(_tokenize(task))
+    post_render_task = bool(phases & {"post-render", "storage/upload"})
+
+    if module_role == "render_helper" and task_terms & FFMPEG_PRIMARY_TERMS:
+        reasons.append(
+            "AI-video profile promotes render_helper for explicit ffmpeg/render command work."
+        )
+        return "primary", max(score, 0.95), reasons
+    if module_role == "planning_agent" and "planning" in phases:
+        reasons.append("AI-video profile promotes planning_agent for planning phase work.")
+        return "primary", max(score, 0.94), reasons
+    if module_role == "quality_agent" and "quality" in phases:
+        reasons.append("AI-video profile promotes quality_agent for quality phase work.")
+        return "primary", max(score, 0.94), reasons
+    if module_role == "highlight_agent" and "highlight" in phases:
+        reasons.append("AI-video profile promotes highlight_agent for highlight phase work.")
+        return "primary", max(score, 0.94), reasons
+
+    if post_render_task:
+        if module_role in AI_VIDEO_POST_RENDER_PRIMARY:
+            reasons.append(
+                "AI-video profile promotes this module for post-render/upload flow."
+            )
+            return "primary", max(score, AI_VIDEO_POST_RENDER_PRIMARY[module_role]), reasons
+        if module_role in AI_VIDEO_POST_RENDER_SECONDARY:
+            reasons.append(
+                "AI-video profile marks this module secondary for post-render/upload flow."
+            )
+            return "secondary", max(score, AI_VIDEO_POST_RENDER_SECONDARY[module_role]), reasons
+        if module_role in AI_VIDEO_BACKGROUND_CONTEXT:
+            reasons.append(
+                "AI-video profile keeps this phase-specific module as background context."
+            )
+            return "context", min(max(score, 0.25), 0.34), reasons
+
+    if "render" in phases and module_role == "render_orchestrator":
+        reasons.append("AI-video profile promotes render_orchestrator for render phase work.")
+        return "primary", max(score, 0.92), reasons
+    if "render" in phases and module_role == "render_helper":
+        reasons.append("AI-video profile keeps render_helper secondary unless ffmpeg is explicit.")
+        return "secondary", max(score, 0.70), reasons
+
+    return category, score, reasons
+
+
+def _normalize_profile(profile: str) -> str:
+    return profile if profile in SUPPORTED_PROFILES else DEFAULT_PROFILE
+
+
+def _is_under_shared_package(parts: list[str]) -> bool:
+    return "packages" in parts and "shared" in parts
+
+
 def _render_relevant_files(
     files: list[TaskRelevantFile],
     fallback: list[str] | None = None,
@@ -693,9 +917,24 @@ def _render_relevant_files(
     if not files:
         return [f"- {item}" for item in fallback] if fallback else ["- None"]
     return [
-        f"- `{file.path}` ({file.role}, {file.confidence:.2f}): {file.reason}"
+        f"- `{file.path}` ({_display_role(file)}, {file.confidence:.2f}): {file.reason}"
         for file in files
     ]
+
+
+def _render_module_roles(context: TaskContext) -> list[str]:
+    files = [
+        *context.primary_files,
+        *context.secondary_files,
+        *context.context_files,
+        *context.avoid_files,
+    ]
+    role_lines = [
+        f"- {Path(file.path).name}: {file.module_role}"
+        for file in files
+        if file.module_role
+    ]
+    return role_lines or ["- None"]
 
 
 def _render_plain_list(items: list[str]) -> list[str]:
@@ -705,4 +944,19 @@ def _render_plain_list(items: list[str]) -> list[str]:
 def _render_prompt_file_list(files: list[TaskRelevantFile]) -> str:
     if not files:
         return "- None"
-    return "\n".join(f"- `{file.path}` ({file.role})" for file in files)
+    return "\n".join(f"- `{file.path}` ({_display_role(file)})" for file in files)
+
+
+def _display_role(file: TaskRelevantFile) -> str:
+    if file.module_role:
+        return f"{file.role}, {file.module_role}"
+    return file.role
+
+
+def _profile_prompt_note(context: TaskContext) -> str:
+    if context.project_profile != AI_VIDEO_PROFILE:
+        return "Primary files are selected using the generic deterministic relevance profile."
+    return (
+        "Primary files are selected based on AI/video pipeline roles. "
+        "Do not inspect planning/quality/highlight modules unless the task requires those phases."
+    )

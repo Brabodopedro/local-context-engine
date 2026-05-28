@@ -84,3 +84,39 @@ def test_prompt_does_not_fallback_when_primary_files_is_empty(
     assert "Inspect primary files first" in output
     assert "- None" in output
     assert "Inspect secondary files only if needed" in output
+
+
+def test_ai_video_relevant_files_json_includes_module_role(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    init(profile="ai-video")
+    worker_dir = tmp_path / "apps" / "workers" / "aethel_workers"
+    api_dir = tmp_path / "apps" / "api" / "aethel_api"
+    shared_dir = tmp_path / "packages" / "shared" / "aethel_shared"
+    worker_dir.mkdir(parents=True)
+    api_dir.mkdir(parents=True)
+    shared_dir.mkdir(parents=True)
+    (worker_dir / "rendering.py").write_text("def render():\n    pass\n", encoding="utf-8")
+    (worker_dir / "worker.py").write_text("def run():\n    pass\n", encoding="utf-8")
+    (api_dir / "outputs_api.py").write_text("def output_status():\n    pass\n", encoding="utf-8")
+    (shared_dir / "models.py").write_text("class VideoOutput:\n    pass\n", encoding="utf-8")
+    scan(Path("."))
+
+    task("add YouTube private upload after render")
+
+    data = read_json(
+        tmp_path
+        / ".ai-context"
+        / "tasks"
+        / "add-youtube-private-upload-after-render"
+        / "relevant-files.json"
+    )
+    module_roles = {file["path"]: file["module_role"] for file in data["primary_files"]}
+    assert data["project_profile"] == "ai-video"
+    assert {"render", "post-render", "storage/upload"} <= set(data["detected_pipeline_phases"])
+    assert module_roles["apps/workers/aethel_workers/rendering.py"] == "render_orchestrator"
+    assert module_roles["apps/workers/aethel_workers/worker.py"] == "worker_entrypoint"
+    assert module_roles["apps/api/aethel_api/outputs_api.py"] == "output_api"
+    assert module_roles["packages/shared/aethel_shared/models.py"] == "shared_models"

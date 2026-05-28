@@ -66,6 +66,7 @@ class UpdateSummary(BaseModel):
 class TaskRelevantFile(BaseModel):
     path: str
     role: str = "unknown"
+    module_role: str | None = None
     reason: str
     confidence: float
 
@@ -73,11 +74,13 @@ class TaskRelevantFile(BaseModel):
 class TaskContext(BaseModel):
     task: str
     slug: str
+    project_profile: str = "generic"
     max_primary_files: int = 5
     max_secondary_files: int = 8
     max_context_files: int = 10
     max_avoid_files: int = 20
     detected_intents: list[str] = Field(default_factory=list)
+    detected_pipeline_phases: list[str] = Field(default_factory=list)
     primary_files: list[TaskRelevantFile] = Field(default_factory=list)
     secondary_files: list[TaskRelevantFile] = Field(default_factory=list)
     context_files: list[TaskRelevantFile] = Field(default_factory=list)
